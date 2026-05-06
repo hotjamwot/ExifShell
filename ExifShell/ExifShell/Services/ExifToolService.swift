@@ -346,6 +346,64 @@ enum ExifToolService {
         }
     }
 
+    /// Renames files using their metadata according to the pattern:
+    /// `{DateTimeOriginal}_{###}_{Description}.{ext}`
+    ///
+    /// This runs the equivalent of:
+    /// ```
+    /// exiftool -m "-FileName<${DateTimeOriginal}_%03.c_${Description;...}.%e" \
+    ///     -d "%Y_%m_%d_%H%M" <files...>
+    /// ```
+    ///
+    /// - Parameter urls: The file URLs to rename.
+    /// - Returns: A WriteResult with success status and captured output/error.
+    static func renameFiles(_ urls: [URL]) -> WriteResult {
+        guard !urls.isEmpty else {
+            return WriteResult(success: false, output: "No files provided.")
+        }
+
+        if let error = missingToolError {
+            return WriteResult(success: false, output: error)
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: exifToolPath)
+
+        let expression = #"-FileName<${DateTimeOriginal}_%03.c_${Description;if($_){s/'\''//g;s/[^\p{L}\p{N}]+/_/g;s/^_+|_+$//g}}.%e"#
+
+        let args: [String] = [
+            "-m",
+            expression,
+            "-d",
+            "%Y_%m_%d_%H%M"
+        ] + urls.map(\.path)
+        process.arguments = args
+
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        process.standardOutput = outPipe
+        process.standardError = errPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: outData, encoding: .utf8) ?? ""
+            let errorOutput = String(data: errData, encoding: .utf8) ?? ""
+            let combined = [output, errorOutput]
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            let success = process.terminationStatus == 0
+            return WriteResult(success: success, output: success ? output : combined)
+        } catch {
+            return WriteResult(success: false, output: error.localizedDescription)
+        }
+    }
+
     /// Runs a full sanitise on the given files:
     ///   - Normalises DateTimeOriginal format
     ///   - Copies DateTimeOriginal → CreateDate, ModifyDate

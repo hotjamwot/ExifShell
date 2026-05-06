@@ -116,6 +116,27 @@ struct PreviewPanel: View {
                         .buttonStyle(.bordered)
                         .controlSize(.regular)
 
+                        // Rename button
+                        Button {
+                            viewModel.renameAll()
+                        } label: {
+                            HStack(spacing: 6) {
+                                if viewModel.isRenaming {
+                                    ProgressView()
+                                        .scaleEffect(0.7)
+                                        .controlSize(.small)
+                                }
+                                Image(systemName: "pencil.and.list.clipboard")
+                                Text(viewModel.isRenaming
+                                     ? "Renaming..."
+                                     : "Rename All")
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .disabled(viewModel.isRenaming)
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
+
                         // Status
                         if let status = viewModel.statusMessage {
                             Text(status)

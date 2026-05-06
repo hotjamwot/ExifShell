@@ -257,6 +257,9 @@ class FileListViewModel {
     /// Whether sanitise is currently running.
     var isSanitising = false
 
+    /// Whether rename is currently running.
+    var isRenaming = false
+
     /// Runs the full sanitise pipeline on all loaded files:
     ///   - Normalises DateTimeOriginal format
     ///   - Copies DateTimeOriginal → CreateDate, ModifyDate
@@ -309,6 +312,53 @@ class FileListViewModel {
         }
 
         isSanitising = false
+    }
+
+    // MARK: - Rename
+
+    /// Runs the rename pipeline on all loaded files.
+    /// Renames files to: `{DateTimeOriginal}_{###}_{Description}.{ext}`
+    func renameAll() {
+        guard !files.isEmpty else {
+            statusMessage = "No files to rename."
+            return
+        }
+
+        guard !isRenaming else { return }
+
+        // Save any dirty files first so we rename with clean metadata
+        if dirtyCount > 0 {
+            saveAll()
+        }
+
+        isRenaming = true
+        statusMessage = "Renaming \(files.count) file(s)..."
+        clearFeedback()
+
+        let urls = files.map(\.url)
+        let result = ExifToolService.renameFiles(urls)
+
+        if result.success {
+            statusMessage = "✅ Renamed \(files.count) file(s) successfully."
+            // Re-load metadata because filenames have changed
+            // We need to refresh the files list with the new URLs
+            let metadata = ExifToolService.readAllMetadata(from: urls)
+            for file in files {
+                if let m = metadata[file.url] {
+                    if let dto = m.dateTimeOriginal {
+                        file.dateTimeOriginal = dto
+                    }
+                    if let desc = m.description {
+                        file.description = desc
+                    }
+                }
+                file.markClean()
+            }
+        } else {
+            statusMessage = "❌ Rename failed: \(result.output)"
+        }
+
+        isRenaming = false
     }
 
     // MARK: - Dedup
