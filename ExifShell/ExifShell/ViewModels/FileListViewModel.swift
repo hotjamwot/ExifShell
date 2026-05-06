@@ -339,20 +339,15 @@ class FileListViewModel {
         let result = ExifToolService.renameFiles(urls)
 
         if result.success {
-            statusMessage = "✅ Renamed \(files.count) file(s) successfully."
-            // Re-load metadata because filenames have changed
-            // We need to refresh the files list with the new URLs
-            let metadata = ExifToolService.readAllMetadata(from: urls)
+            let mappingCount = result.pathMapping.count
+            statusMessage = "✅ Renamed \(mappingCount) file(s) successfully."
+
+            // Update each file's URL and filename to match the new names on disk
             for file in files {
-                if let m = metadata[file.url] {
-                    if let dto = m.dateTimeOriginal {
-                        file.dateTimeOriginal = dto
-                    }
-                    if let desc = m.description {
-                        file.description = desc
-                    }
+                if let newPath = result.pathMapping[file.url.path] {
+                    let newURL = URL(fileURLWithPath: newPath)
+                    file.updateURL(newURL)
                 }
-                file.markClean()
             }
         } else {
             statusMessage = "❌ Rename failed: \(result.output)"

@@ -5,8 +5,8 @@ import Observation
 @Observable
 final class ImageFile: Identifiable, Hashable {
     let id = UUID()
-    let url: URL
-    let filename: String
+    var url: URL
+    var filename: String
 
     // MARK: - DateTimeOriginal (editable)
 
@@ -79,6 +79,13 @@ final class ImageFile: Identifiable, Hashable {
         originalDateTimeOriginal = dateTimeOriginal
         originalDescription = description
         isDirty = false
+    }
+
+    /// Updates the URL and filename after a file rename on disk.
+    func updateURL(_ newURL: URL) {
+        url = newURL
+        filename = newURL.lastPathComponent
+        // Re-check dirty status since we may need to re-read metadata
     }
 
     // MARK: - Hashable

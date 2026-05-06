@@ -346,24 +346,37 @@ enum ExifToolService {
         }
     }
 
+    /// Result of a rename operation, including a mapping of old path → new path.
+    struct RenameResult {
+        let success: Bool
+        let output: String
+        /// Maps each original file path to its new path after renaming.
+        /// Only populated on success — empty on failure.
+        let pathMapping: [String: String]
+    }
+
     /// Renames files using their metadata according to the pattern:
     /// `{DateTimeOriginal}_{###}_{Description}.{ext}`
     ///
     /// This runs the equivalent of:
     /// ```
-    /// exiftool -m "-FileName<${DateTimeOriginal}_%03.c_${Description;...}.%e" \
+    /// exiftool -v -m "-FileName<${DateTimeOriginal}_%03.c_${Description;...}.%e" \
     ///     -d "%Y_%m_%d_%H%M" <files...>
     /// ```
     ///
+    /// With `-v` (verbose) ExifTool outputs lines like:
+    /// `'old/path/file.jpg' -> 'new/path/file.jpg'`
+    /// which we parse to build the path mapping for the caller.
+    ///
     /// - Parameter urls: The file URLs to rename.
-    /// - Returns: A WriteResult with success status and captured output/error.
-    static func renameFiles(_ urls: [URL]) -> WriteResult {
+    /// - Returns: A RenameResult with success status, output, and a path mapping.
+    static func renameFiles(_ urls: [URL]) -> RenameResult {
         guard !urls.isEmpty else {
-            return WriteResult(success: false, output: "No files provided.")
+            return RenameResult(success: false, output: "No files provided.", pathMapping: [:])
         }
 
         if let error = missingToolError {
-            return WriteResult(success: false, output: error)
+            return RenameResult(success: false, output: error, pathMapping: [:])
         }
 
         let process = Process()
@@ -372,7 +385,8 @@ enum ExifToolService {
         let expression = #"-FileName<${DateTimeOriginal}_%03.c_${Description;if($_){s/'\''//g;s/[^\p{L}\p{N}]+/_/g;s/^_+|_+$//g}}.%e"#
 
         let args: [String] = [
-            "-m",
+            "-v",          // verbose — outputs old → new path mappings
+            "-m",          // ignore minor errors
             expression,
             "-d",
             "%Y_%m_%d_%H%M"
@@ -398,9 +412,53 @@ enum ExifToolService {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
 
             let success = process.terminationStatus == 0
-            return WriteResult(success: success, output: success ? output : combined)
+
+            // Parse verbose output for "old_path -> new_path" lines
+            var pathMapping: [String: String] = [:]
+            if success {
+                // Regex matches: 'old_path' -> 'new_path'
+                // ExifTool verbose output uses single quotes around paths
+                let pattern = #"'([^']+)'\s*->\s*'([^']+)'"#
+                if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
+                    let nsRange = NSRange(output.startIndex..<output.endIndex, in: output)
+                    let matches = regex.matches(in: output, options: [], range: nsRange)
+                    for match in matches {
+                        if match.numberOfRanges == 3,
+                           let oldRange = Range(match.range(at: 1), in: output),
+                           let newRange = Range(match.range(at: 2), in: output) {
+                            let oldPath = String(output[oldRange])
+                            let newPath = String(output[newRange])
+                            pathMapping[oldPath] = newPath
+                        }
+                    }
+                }
+
+                // Fallback: if regex parsing found nothing but rename succeeded,
+                // try to detect new filenames by scanning the directory.
+                // This handles cases where ExifTool's output format differs.
+                if pathMapping.isEmpty && !urls.isEmpty {
+                    for originalURL in urls {
+                        let parent = originalURL.deletingLastPathComponent()
+                        if let contents = try? FileManager.default.contentsOfDirectory(at: parent,
+                            includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+                            // Find file that isn't the original and wasn't already mapped
+                            let newURLs = contents.filter { newURL in
+                                guard newURL.lastPathComponent != originalURL.lastPathComponent else {
+                                    return false
+                                }
+                                return !pathMapping.values.contains(newURL.path)
+                            }
+                            if let newURL = newURLs.first {
+                                pathMapping[originalURL.path] = newURL.path
+                            }
+                        }
+                    }
+                }
+            }
+
+            return RenameResult(success: success, output: success ? output : combined, pathMapping: pathMapping)
         } catch {
-            return WriteResult(success: false, output: error.localizedDescription)
+            return RenameResult(success: false, output: error.localizedDescription, pathMapping: [:])
         }
     }
 
