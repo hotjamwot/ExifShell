@@ -17,6 +17,7 @@ A minimal, high-speed macOS application for inspecting and editing image metadat
 - View read-only metadata: CreateDate, ModifyDate, ImageDescription, Caption-Abstract
 - **Multi-select with ⌘+click** — edit or remove multiple files at once
 - **Bulk edit bar** — when 2+ files are selected, toolbars appear to set DateTimeOriginal or Description on all of them
+- **Bulk offset edit** — apply a relative `+` / `-` offset in Hours, Days, or Months to selected DateTimeOriginal values
 - Files are **marked dirty** on edit — orange text in the table signals unsaved changes
 - **Diff review** — preview panel shows grey (current) → green (proposed) before you save
 - **Single Save button** — saves all dirty files in efficient batch writes per unique value for each field
@@ -58,7 +59,7 @@ You can open `Package.swift` directly in Xcode and press ▶︎.
 2. Drop images or folders → Files load with current metadata (batch-loaded for speed)
 3. Click a file to preview → Thumbnail + editable fields + read-only metadata shown
 4. Edit the date or description in-place → File marked "• modified" (dirty)
-5. Select multiple files (⌘+click) → Bulk edit bars appear for mass updates
+5. Select multiple files (⌘+click) → Bulk edit bars appear for mass updates including absolute DateTimeOriginal writes and relative offset adjustments
 6. Press ⌘S → Save all dirty files
    Press ⌘K → Clear all files and return to drop zone
    Press ⌫ Delete → Remove selected files from the list

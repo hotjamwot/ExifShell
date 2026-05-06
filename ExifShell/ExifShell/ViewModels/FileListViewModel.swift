@@ -19,6 +19,33 @@ class FileListViewModel {
     /// The bulk-edit value being typed (shown in the toolbar when multiple files are selected).
     var bulkEditValue: String = ""
 
+    enum DateBulkEditMode: String, CaseIterable, Identifiable {
+        case set = "Set"
+        case offset = "Offset"
+
+        var id: String { rawValue }
+    }
+
+    enum BulkOffsetUnit: String, CaseIterable, Identifiable {
+        case hours = "Hours"
+        case days = "Days"
+        case months = "Months"
+
+        var id: String { rawValue }
+        var calendarComponent: Calendar.Component {
+            switch self {
+            case .hours: return .hour
+            case .days: return .day
+            case .months: return .month
+            }
+        }
+    }
+
+    var bulkEditMode: DateBulkEditMode = .set
+    var bulkOffsetPositive = true
+    var bulkOffsetAmount: String = ""
+    var bulkOffsetUnit: BulkOffsetUnit = .hours
+
     struct SaveFeedback: Equatable {
         let filename: String
         let from: String
@@ -121,8 +148,17 @@ class FileListViewModel {
 
     // MARK: - Bulk Edit
 
-    /// Applies the current `bulkEditValue` to all currently selected files.
+    /// Applies the current bulk edit settings to all currently selected files.
     func applyBulkEdit() {
+        switch bulkEditMode {
+        case .set:
+            applyBulkSet()
+        case .offset:
+            applyBulkOffset()
+        }
+    }
+
+    private func applyBulkSet() {
         let value = bulkEditValue.trimmingCharacters(in: .whitespaces)
         guard !value.isEmpty else {
             statusMessage = "Enter a date value before applying."
@@ -137,6 +173,53 @@ class FileListViewModel {
             file.dateTimeOriginal = value
         }
         statusMessage = "Applied to \(targets.count) file(s)."
+    }
+
+    private func applyBulkOffset() {
+        let trimmedAmount = bulkOffsetAmount.trimmingCharacters(in: .whitespaces)
+        guard let amount = Int(trimmedAmount), amount != 0 else {
+            statusMessage = "Enter a non-zero offset amount."
+            return
+        }
+        let signedAmount = bulkOffsetPositive ? amount : -amount
+        let targets = selectedFiles
+        guard !targets.isEmpty else {
+            statusMessage = "No files selected."
+            return
+        }
+
+        var appliedCount = 0
+        var skippedCount = 0
+
+        for file in targets {
+            guard let originalDate = Self.exifDateFormatter.date(from: file.dateTimeOriginal) else {
+                skippedCount += 1
+                continue
+            }
+            guard let shiftedDate = Calendar.current.date(
+                byAdding: bulkOffsetUnit.calendarComponent,
+                value: signedAmount,
+                to: originalDate
+            ) else {
+                skippedCount += 1
+                continue
+            }
+
+            let newValue = Self.exifDateFormatter.string(from: shiftedDate)
+            if newValue != file.dateTimeOriginal {
+                file.dateTimeOriginal = newValue
+                appliedCount += 1
+            }
+        }
+
+        if appliedCount > 0 {
+            let sign = bulkOffsetPositive ? "+" : "−"
+            statusMessage = "Applied \(sign)\(amount) \(bulkOffsetUnit.rawValue.lowercased()) to \(appliedCount) file(s)."
+        } else if skippedCount > 0 {
+            statusMessage = "No valid DateTimeOriginal values could be offset."
+        } else {
+            statusMessage = "Offset did not change any files."
+        }
     }
 
     /// Applies the current `bulkEditValue` to descriptions of all currently selected files.
@@ -251,6 +334,14 @@ class FileListViewModel {
             statusMessage = "❌ Save failed: \(lastError)"
         }
     }
+
+    private static let exifDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return formatter
+    }()
 
     // MARK: - Sanitise
 

@@ -115,6 +115,7 @@ User can:
 
 * Apply changes to selected files (single or bulk)
 * Use bulk edit bars for date and description when multiple files are selected
+* Use relative offset mode to shift DateTimeOriginal by hours, days, or months for timezone or clock-drift fixes
 * Use keyboard shortcut (⌘S)
 
 ---
@@ -122,6 +123,7 @@ User can:
 ### 5. Batch Operations
 
 * Bulk edit DateTimeOriginal across selected files
+* Bulk offset DateTimeOriginal by a relative amount (Hours / Days / Months) for timezone/camera-clock corrections
 * Bulk edit Description across selected files
 * Save groups dirty files by unique value for efficient batch writes
 

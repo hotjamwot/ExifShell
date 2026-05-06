@@ -38,7 +38,8 @@ All state management uses Apple's `@Observable` macro (macOS 14+ Observation fra
        │  var selectedFiles: []   │  ← multi-select
        │  var bulkEditValue       │  ← bulk edit (date)
        │  clearAll()              │  ← ⌘K
-       │  applyBulkEdit()         │  ← bulk set date
+       │  applyBulkEdit()         │  ← bulk set date / offset mode
+       │  applyBulkOffset()       │  ← bulk offset date by hours/days/months
        │  applyBulkEditDesc()     │  ← bulk set desc
        │  saveAll()               │  ← saves date + desc
        └──────────┬───────────────┘

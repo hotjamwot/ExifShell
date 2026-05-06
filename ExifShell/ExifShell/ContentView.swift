@@ -92,19 +92,60 @@ struct ContentView: View {
     @ViewBuilder
     private var bulkEditBar: some View {
         HStack(spacing: 8) {
-            Image(systemName: "calendar")
-                .foregroundColor(.secondary)
-                .font(.caption)
+            Picker("Mode", selection: $viewModel.bulkEditMode) {
+                ForEach(FileListViewModel.DateBulkEditMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 140)
 
-            Text("Set DateTimeOriginal for \(viewModel.selectedFiles.count) selected file(s):")
-                .font(.caption)
-                .foregroundColor(.secondary)
+            if viewModel.bulkEditMode == .set {
+                Image(systemName: "calendar")
+                    .foregroundColor(.secondary)
+                    .font(.caption)
 
-            TextField("e.g. 2024:01:15 14:30:00", text: $viewModel.bulkEditValue)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(.caption, design: .monospaced))
-                .frame(width: 200)
-                .onSubmit { viewModel.applyBulkEdit() }
+                Text("Set DateTimeOriginal for \(viewModel.selectedFiles.count) selected file(s):")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                TextField("e.g. 2024:01:15 14:30:00", text: $viewModel.bulkEditValue)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(width: 220)
+                    .onSubmit { viewModel.applyBulkEdit() }
+            } else {
+                Image(systemName: "clock.arrow.2.circlepath")
+                    .foregroundColor(.secondary)
+                    .font(.caption)
+
+                Text("Offset DateTimeOriginal for \(viewModel.selectedFiles.count) selected file(s):")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                Button(action: { viewModel.bulkOffsetPositive.toggle() }) {
+                    Text(viewModel.bulkOffsetPositive ? "+" : "−")
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(width: 28, height: 26)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                TextField("0", text: $viewModel.bulkOffsetAmount)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(width: 60)
+                    .onSubmit { viewModel.applyBulkEdit() }
+
+                Picker("Unit", selection: $viewModel.bulkOffsetUnit) {
+                    ForEach(FileListViewModel.BulkOffsetUnit.allCases) { unit in
+                        Text(unit.rawValue).tag(unit)
+                    }
+                }
+                .pickerStyle(.menu)
+                .controlSize(.small)
+                .frame(width: 100)
+            }
 
             Button("Apply") {
                 viewModel.applyBulkEdit()
