@@ -11,7 +11,7 @@ final class ImageFile: Identifiable, Hashable {
     // MARK: - DateTimeOriginal (editable)
 
     /// The last-saved DateTimeOriginal value.
-    private(set) var originalDateTimeOriginal: String
+    var originalDateTimeOriginal: String
 
     /// The current (possibly edited) value.
     var dateTimeOriginal: String {
@@ -25,7 +25,7 @@ final class ImageFile: Identifiable, Hashable {
     // MARK: - Description (editable, master field)
 
     /// The last-saved description value.
-    private(set) var originalDescription: String
+    var originalDescription: String
 
     /// The current (possibly edited) description value.
     /// When edited, this is the master value that will be written to all
@@ -40,10 +40,10 @@ final class ImageFile: Identifiable, Hashable {
 
     // MARK: - Read-Only Display Fields
 
-    let createDate: String?
-    let modifyDate: String?
-    let imageDescription: String?
-    let captionAbstract: String?
+    var createDate: String?
+    var modifyDate: String?
+    var imageDescription: String?
+    var captionAbstract: String?
 
     // MARK: - Dirty State
 

@@ -9,18 +9,22 @@ A minimal, high-speed macOS application for inspecting and editing image metadat
 - **Batch power, single-file precision**
 - **WYSIWYG editing** — no mental translation from terminal syntax
 
-## Minimal Viable Feature Set
+## Features
 
 - Drag & drop images or folders
 - View and edit `DateTimeOriginal` metadata in a sortable table
-- **Multi-select with ⌘+click** — edit multiple files at once
-- **Bulk edit bar** — when 2+ files are selected, a toolbar appears to set a value on all of them
+- View and edit `Description` metadata — written to Description, ImageDescription & Caption-Abstract on save
+- View read-only metadata: CreateDate, ModifyDate, ImageDescription, Caption-Abstract
+- **Multi-select with ⌘+click** — edit or remove multiple files at once
+- **Bulk edit bar** — when 2+ files are selected, toolbars appear to set DateTimeOriginal or Description on all of them
 - Files are **marked dirty** on edit — orange text in the table signals unsaved changes
 - **Diff review** — preview panel shows grey (current) → green (proposed) before you save
-- **Single Save button** — saves all dirty files in efficient batch writes per unique value
+- **Single Save button** — saves all dirty files in efficient batch writes per unique value for each field
+- **Sanitise All** — normalises DateTimeOriginal format, propagates it to CreateDate/ModifyDate, clears offset fields, and copies Description to ImageDescription/Caption-Abstract
+- **Delete/Backspace** — remove selected files from the working list
 - Thumbnail preview of selected image
 - Save confirmation with before/after values (clears on navigation)
-- Keyboard shortcuts: `⌘S` (save all), `⌘K` (clear all files)
+- Keyboard shortcuts: `⌘S` (save all), `⌘K` (clear all files), `⌫ Delete` (remove selected)
 
 ## How to Run
 
@@ -51,12 +55,14 @@ You can open `Package.swift` directly in Xcode and press ▶︎.
 
 ```
 1. Launch app → Empty drop zone appears
-2. Drop images or folders → Files load with current DateTimeOriginal (batch-loaded for speed)
-3. Click a file to preview → Thumbnail + editable field shown
-4. Edit the date in-place → File marked "• modified" (dirty)
-5. Select multiple files (⌘+click) → Bulk edit bar appears for mass updates
+2. Drop images or folders → Files load with current metadata (batch-loaded for speed)
+3. Click a file to preview → Thumbnail + editable fields + read-only metadata shown
+4. Edit the date or description in-place → File marked "• modified" (dirty)
+5. Select multiple files (⌘+click) → Bulk edit bars appear for mass updates
 6. Press ⌘S → Save all dirty files
    Press ⌘K → Clear all files and return to drop zone
+   Press ⌫ Delete → Remove selected files from the list
+7. Press "Sanitise All" to normalise dates, clear offsets, and sync descriptions
 ```
 
 ### Keyboard Shortcuts
@@ -66,26 +72,59 @@ You can open `Package.swift` directly in Xcode and press ▶︎.
 | `⌘S` | Save all dirty files |
 | `⌘K` | Clear all files (back to drop zone) |
 | `⌘+click` | Toggle multi-select in file list |
+| `⌫ Delete` | Remove selected files from list |
 | `Return` (in bulk edit field) | Apply bulk edit value |
+
+### Editable Fields
+
+| Field | Saved To |
+|-------|----------|
+| Date/Time Original | `EXIF:DateTimeOriginal` |
+| Description | `Description`, `ImageDescription`, `Caption-Abstract` |
+
+### Read-Only Display Fields (Preview Panel)
+
+- Create Date
+- Modify Date
+- Image Description
+- Caption Abstract
+
+### Sanitise Pipeline
+
+The "Sanitise All" button runs this ExifTool command on all loaded files:
+
+```bash
+exiftool -overwrite_original \
+  '-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}' \
+  '-CreateDate<DateTimeOriginal' \
+  '-ModifyDate<DateTimeOriginal' \
+  -OffsetTime= \
+  -OffsetTimeOriginal= \
+  -OffsetTimeDigitized= \
+  '-ImageDescription<Description' \
+  '-Caption-Abstract<Description'
+```
+
+This normalises the date format, propagates DateTimeOriginal to other date fields, clears any timezone offsets, and syncs the Description to all description-related tags.
 
 ### Dirty State
 
 ExifShell uses an intentional "edit → mark dirty → apply" pattern:
 
-- Editing a file's date marks it as **dirty** (orange "• modified" indicator).
+- Editing a file's date or description marks it as **dirty** (orange "• modified" indicator).
 - Nothing is written to disk until you explicitly apply.
-- Apply buttons show the dirty count (e.g. "Apply to All (3 dirty)").
-- Buttons are **disabled** when there's nothing to save.
+- The Save button shows the dirty count (e.g. "Save Changes (3 dirty)").
+- The Save button is **disabled** when there's nothing to save.
 - On successful write, the file is marked clean and the original baseline resets.
 
 This prevents accidental overwrites and enables efficient batch writes
-by grouping files with identical date values into a single ExifTool process call.
+by grouping files with identical values into a single ExifTool process call.
 
 ## Performance
 
 ### Batch ExifTool Reads
 
-When you drop files, the app processes **all files in a single ExifTool invocation** rather than spawning one process per file. For 100+ files this is ~50–100× faster than the naive approach.
+When you drop files, the app processes **all files in a single ExifTool invocation** reading 6 metadata tags at once, rather than spawning one process per file. For 100+ files this is ~50–100× faster than the naive approach.
 
 ### ExifTool Path Resolution
 
@@ -107,14 +146,14 @@ See [Documentation/ARCHITECTURE.md](Documentation/ARCHITECTURE.md) for full deta
 ```
 Sources/
 ├── ExifShellApp.swift          # App entry point
-├── ContentView.swift           # Root view + bulk edit bar + keyboard shortcuts
-├── Models/ImageFile.swift      # Data model (with dirty state tracking)
-├── ViewModels/FileListViewModel.swift  # State, logic, batch apply, bulk edit
-├── Services/ExifToolService.swift      # ExifTool wrapper (batch reads + writes)
+├── ContentView.swift           # Root view + bulk edit bars + keyboard shortcuts
+├── Models/ImageFile.swift      # Data model (with dirty state tracking, 6 metadata fields)
+├── ViewModels/FileListViewModel.swift  # State, logic, batch apply, bulk edit, sanitise
+├── Services/ExifToolService.swift      # ExifTool wrapper (batch reads + writes + sanitise)
 └── Views/
     ├── DropZoneView.swift      # Drag-and-drop
-    ├── FileTableView.swift     # Metadata table with multi-select
-    └── PreviewPanel.swift      # Thumbnail + diff + apply
+    ├── FileTableView.swift     # Metadata table with multi-select, date + desc columns
+    └── PreviewPanel.swift      # Thumbnail + diff + read-only metadata + Save + Sanitise
 Documentation/
 ├── ARCHITECTURE.md             # Architecture overview
 ├── AI_CONTEXT.md               # AI-friendly edit context

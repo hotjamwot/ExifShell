@@ -217,4 +217,36 @@ Or open `Package.swift` in Xcode and run.
 | `⌘S` | App-wide | Save all dirty files |
 | `⌘K` | App-wide | Clear all files / drop zone |
 | `⌘+click` | Table | Toggle multi-select |
+| `⌫ Delete` | App-wide | Remove selected files from list |
 | `Return` | Bulk edit bar | Apply bulk edit value |
+
+## Sanitise Pipeline
+
+The "Sanitise All" button in the Preview Panel runs a single ExifTool invocation that:
+
+1. **Normalises DateTimeOriginal** — reformats to `%Y:%m:%d %H:%M:%S` via `DateFmt`
+2. **Propagates date** — copies DateTimeOriginal → CreateDate, ModifyDate
+3. **Clears offsets** — removes OffsetTime, OffsetTimeOriginal, OffsetTimeDigitized
+4. **Syncs descriptions** — copies Description → ImageDescription, Caption-Abstract
+
+After the sanitise completes, the ViewModel re-reads all metadata from disk so the display is fully refreshed. Dirty state is cleared since the writes went directly to disk.
+
+### ExifTool Command
+
+```bash
+exiftool -overwrite_original \
+  '-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}' \
+  '-CreateDate<DateTimeOriginal' \
+  '-ModifyDate<DateTimeOriginal' \
+  -OffsetTime= \
+  -OffsetTimeOriginal= \
+  -OffsetTimeDigitized= \
+  '-ImageDescription<Description' \
+  '-Caption-Abstract<Description'
+```
+
+This is exposed via `ExifToolService.sanitise(_ urls:)` and triggered by `FileListViewModel.sanitiseAll()`.
+
+## Delete / Remove Files
+
+Select one or more files (⌘+click for multi-select) and press `⌫ Delete` to remove them from the working list. The shortcut is bound app-wide in `ContentView.swift` via a hidden button, calling `FileListViewModel.removeSelected()`.

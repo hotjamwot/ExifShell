@@ -16,10 +16,10 @@ ExifShell is a native macOS app (SwiftUI) that lets users drag-and-drop images, 
 | `Sources/ContentView.swift` | Root view. Shows `DropZoneView` when empty, or `HSplitView` (table + preview) when files loaded. Owns all drop handling, two bulk edit bars (date & description), status bar, and app-wide keyboard shortcuts (⌘K, ⌘S). |
 | `Sources/Models/ImageFile.swift` | `@Observable` class: `url`, `filename`, `dateTimeOriginal`, `description` (both editable with dirty tracking), read-only `createDate`, `modifyDate`, `imageDescription`, `captionAbstract`, `thumbnail`. |
 | `Sources/ViewModels/FileListViewModel.swift` | `@Observable` class: all state (`files[]`, `selectedFile`, `selectedFiles[]`, `bulkEditValue`), import (batch full metadata read), select, save (saves date + description independently), clear, bulk edit (date & description). |
-| `Sources/Services/ExifToolService.swift` | Static methods to read/write ExifTool metadata. Shells out via `Process`. Auto-resolves exiftool path. Supports batch full reads (`readAllMetadata` returns `[URL: FileMetadata]`), batch date writes, and batch description writes (writes Description, ImageDescription, Caption-Abstract). |
+| `Sources/Services/ExifToolService.swift` | Static methods to read/write ExifTool metadata. Shells out via `Process`. Auto-resolves exiftool path. Supports batch full reads (`readAllMetadata` returns `[URL: FileMetadata]`), batch date writes, batch description writes, and `sanitise()` which runs the full sanitise pipeline (normalise dates, propagate, clear offsets, sync descriptions). |
 | `Sources/Views/DropZoneView.swift` | Visual drop zone (drop handling in ContentView). |
 | `Sources/Views/FileTableView.swift` | SwiftUI `List` with multi-select (`Set<ImageFile.ID>`), editable date + description columns, orange text when dirty. |
-| `Sources/Views/PreviewPanel.swift` | Thumbnail + diff review (date & description) + read-only metadata display + single Save button. |
+| `Sources/Views/PreviewPanel.swift` | Thumbnail + diff review (date & description) + read-only metadata display + Save button + Sanitise All button. |
 
 ---
 
@@ -77,6 +77,7 @@ static func writeDescription(_ value: String, to urls: [URL]) -> WriteResult {
 | Read (date only) | `exiftool -json -DateTimeOriginal <file1> <file2> ...` |
 | Write (date batch) | `exiftool -overwrite_original -EXIF:DateTimeOriginal="<value>" <files...>` |
 | Write (desc batch) | `exiftool -overwrite_original -Description="<value>" -ImageDescription="<value>" -Caption-Abstract="<value>" <files...>` |
+| Sanitise (batch) | `exiftool -overwrite_original '-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}' '-CreateDate<DateTimeOriginal' '-ModifyDate<DateTimeOriginal' -OffsetTime= -OffsetTimeOriginal= -OffsetTimeDigitized= '-ImageDescription<Description' '-Caption-Abstract<Description' <files...>` |
 
 ---
 
@@ -108,9 +109,24 @@ If not found, `missingToolError` returns a descriptive message and all read/writ
   - Date bar (accent-tinted) — sets DateTimeOriginal on all selected files.
   - Description bar (green-tinted) — sets Description on all selected files.
 
+### Delete / Remove Selected Files
+- `FileListViewModel.removeSelected()` removes all files whose IDs are in `selectedFiles`.
+- `ContentView` has a hidden button bound to `⌫ Delete` keyboard shortcut (no modifier).
+- This is distinct from `⌘K` (clear all) — delete only removes selected files.
+
+### Sanitise Pipeline
+- `ExifToolService.sanitise(_ urls:)` runs the full sanitise in one ExifTool invocation:
+  - Normalises DateTimeOriginal format via `DateFmt`
+  - Propagates DateTimeOriginal → CreateDate, ModifyDate
+  - Clears OffsetTime, OffsetTimeOriginal, OffsetTimeDigitized
+  - Copies Description → ImageDescription, Caption-Abstract
+- `FileListViewModel.sanitiseAll()` first saves any dirty files, then runs sanitise on all loaded files, then re-reads metadata and resets dirty state.
+- The "Sanitise All" button in PreviewPanel is disabled while running and shows a ProgressView.
+
 ### Keyboard Shortcuts
 - **⌘S** (app-wide via hidden button in ContentView) — saves all dirty files.
 - **⌘K** (app-wide via hidden button in ContentView) — clears all files, returns to drop zone.
+- **⌫ Delete** (app-wide via hidden button in ContentView) — removes selected files.
 - **⌘+click** — toggle multi-select in the file table.
 - **Return** in the bulk edit text field — apply bulk edit value.
 

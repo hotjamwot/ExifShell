@@ -345,6 +345,78 @@ enum ExifToolService {
             return WriteResult(success: false, output: error.localizedDescription)
         }
     }
+
+    /// Runs a full sanitise on the given files:
+    ///   - Normalises DateTimeOriginal format
+    ///   - Copies DateTimeOriginal → CreateDate, ModifyDate
+    ///   - Clears OffsetTime, OffsetTimeOriginal, OffsetTimeDigitized
+    ///   - Copies Description → ImageDescription, Caption-Abstract
+    ///
+    /// This is equivalent to the user's shell command:
+    /// ```
+    /// exiftool -overwrite_original \
+    ///   '-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}' \
+    ///   '-CreateDate<DateTimeOriginal' \
+    ///   '-ModifyDate<DateTimeOriginal' \
+    ///   -OffsetTime= \
+    ///   -OffsetTimeOriginal= \
+    ///   -OffsetTimeDigitized= \
+    ///   '-ImageDescription<Description' \
+    ///   '-Caption-Abstract<Description' \
+    ///   <files...>
+    /// ```
+    ///
+    /// - Parameter urls: The file URLs to sanitise.
+    /// - Returns: A WriteResult with success status and captured output/error.
+    static func sanitise(_ urls: [URL]) -> WriteResult {
+        guard !urls.isEmpty else {
+            return WriteResult(success: false, output: "No files provided.")
+        }
+
+        if let error = missingToolError {
+            return WriteResult(success: false, output: error)
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: exifToolPath)
+
+        let args: [String] = [
+            "-overwrite_original",
+            #"-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}"#,
+            "-CreateDate<DateTimeOriginal",
+            "-ModifyDate<DateTimeOriginal",
+            "-OffsetTime=",
+            "-OffsetTimeOriginal=",
+            "-OffsetTimeDigitized=",
+            "-ImageDescription<Description",
+            "-Caption-Abstract<Description"
+        ] + urls.map(\.path)
+        process.arguments = args
+
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        process.standardOutput = outPipe
+        process.standardError = errPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: outData, encoding: .utf8) ?? ""
+            let errorOutput = String(data: errData, encoding: .utf8) ?? ""
+            let combined = [output, errorOutput]
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            let success = process.terminationStatus == 0
+            return WriteResult(success: success, output: success ? output : combined)
+        } catch {
+            return WriteResult(success: false, output: error.localizedDescription)
+        }
+    }
 }
 
 // MARK: - JSON Decoding

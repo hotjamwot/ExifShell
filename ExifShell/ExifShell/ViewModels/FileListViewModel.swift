@@ -78,7 +78,22 @@ class FileListViewModel {
         importFiles(urls)
     }
 
-    // MARK: - Clear
+    // MARK: - Remove / Clear
+
+    /// Removes the selected files from the list.
+    func removeSelected() {
+        guard !selectedFiles.isEmpty else {
+            statusMessage = "No files selected to remove."
+            return
+        }
+        let idsToRemove = Set(selectedFiles.map(\.id))
+        files.removeAll { idsToRemove.contains($0.id) }
+        selectedFile = nil
+        selectedFiles = []
+        lastSaveFeedback = nil
+        lastDescriptionSaveFeedback = nil
+        statusMessage = "Removed \(idsToRemove.count) file(s)."
+    }
 
     /// Removes all loaded files and resets state.
     func clearAll() {
@@ -235,6 +250,65 @@ class FileListViewModel {
         } else {
             statusMessage = "❌ Save failed: \(lastError)"
         }
+    }
+
+    // MARK: - Sanitise
+
+    /// Whether sanitise is currently running.
+    var isSanitising = false
+
+    /// Runs the full sanitise pipeline on all loaded files:
+    ///   - Normalises DateTimeOriginal format
+    ///   - Copies DateTimeOriginal → CreateDate, ModifyDate
+    ///   - Clears OffsetTime, OffsetTimeOriginal, OffsetTimeDigitized
+    ///   - Copies Description → ImageDescription, Caption-Abstract
+    func sanitiseAll() {
+        guard !files.isEmpty else {
+            statusMessage = "No files to sanitise."
+            return
+        }
+
+        guard !isSanitising else { return }
+
+        isSanitising = true
+        statusMessage = "Sanitising \(files.count) file(s)..."
+
+        // Save any dirty files first so we sanitise from clean state
+        if dirtyCount > 0 {
+            saveAll()
+        }
+
+        let urls = files.map(\.url)
+        let result = ExifToolService.sanitise(urls)
+
+        if result.success {
+            statusMessage = "✅ Sanitised \(files.count) file(s)."
+            // Re-read metadata so read-only fields update
+            let metadata = ExifToolService.readAllMetadata(from: urls)
+            for file in files {
+                if let m = metadata[file.url] {
+                    // Set current values first (these will mark dirty via didSet
+                    // since originals are still old), then reset originals to match.
+                    if let dto = m.dateTimeOriginal {
+                        file.dateTimeOriginal = dto
+                    }
+                    if let desc = m.description {
+                        file.description = desc
+                    }
+                    // Update read-only fields
+                    file.createDate = m.createDate
+                    file.modifyDate = m.modifyDate
+                    file.imageDescription = m.imageDescription
+                    file.captionAbstract = m.captionAbstract
+                }
+                // markClean syncs originals to current, clearing dirty
+                file.markClean()
+            }
+        } else {
+            statusMessage = "❌ Sanitise failed: \(result.output)"
+        }
+
+        isSanitising = false
     }
 
     // MARK: - Dedup

@@ -95,6 +95,27 @@ struct PreviewPanel: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.regular)
 
+                        // Sanitise button
+                        Button {
+                            viewModel.sanitiseAll()
+                        } label: {
+                            HStack(spacing: 6) {
+                                if viewModel.isSanitising {
+                                    ProgressView()
+                                        .scaleEffect(0.7)
+                                        .controlSize(.small)
+                                }
+                                Image(systemName: "wand.and.stars")
+                                Text(viewModel.isSanitising
+                                     ? "Sanitising..."
+                                     : "Sanitise All")
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .disabled(viewModel.isSanitising)
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
+
                         // Status
                         if let status = viewModel.statusMessage {
                             Text(status)

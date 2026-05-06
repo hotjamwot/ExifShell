@@ -142,25 +142,27 @@ User can:
 
   * Filename
   * DateTimeOriginal (editable)
-  * Description (editable — new)
+  * Description (editable)
 * File selection (single and multi-select via ⌘+click)
 * Thumbnail preview (single image)
 * Editable DateTimeOriginal field (inline in table)
-* Editable Description field (inline in table — new)
+* Editable Description field (inline in table)
 * **Bulk edit** — set DateTimeOriginal on multiple selected files at once
-* **Bulk edit description** — set Description on multiple selected files at once (new)
+* **Bulk edit description** — set Description on multiple selected files at once
+* **Delete selected** — press ⌫ Delete/Backspace to remove files from the working list
 * Batch ExifTool reads — all metadata (6 tags) processed in a single command for speed
 * Preview panel shows:
 
   * DateTimeOriginal diff (grey → green when dirty)
   * Description diff (grey → green when dirty)
-  * Read-only Create Date, Modify Date, ImageDescription, Caption-Abstract (new)
+  * Read-only Create Date, Modify Date, ImageDescription, Caption-Abstract
 * Apply changes:
 
   * ⌘S (app-wide shortcut)
   * Save button in preview panel
+* **Sanitise All** button — normalises dates, clears offsets, syncs descriptions
 * ⌘K — clear all files / reset to drop zone
-* Larger default window size (1100×680 — new)
+* Larger default window size (1100×680)
 
 #### Backend (via ExifTool)
 
@@ -175,7 +177,7 @@ User can:
   ```bash
   exiftool -overwrite_original -EXIF:DateTimeOriginal="..." FILE
   ```
-* Write (description — new):
+* Write (description):
 
   ```bash
   exiftool -overwrite_original \
@@ -183,37 +185,40 @@ User can:
     -ImageDescription="..." \
     -Caption-Abstract="..." FILE
   ```
+* Sanitise (full pipeline):
+
+  ```bash
+  exiftool -overwrite_original \
+    '-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}' \
+    '-CreateDate<DateTimeOriginal' \
+    '-ModifyDate<DateTimeOriginal' \
+    -OffsetTime= \
+    -OffsetTimeOriginal= \
+    -OffsetTimeDigitized= \
+    '-ImageDescription<Description' \
+    '-Caption-Abstract<Description'
+  ```
 
 ---
 
-### 🟡 Phase 2 — Productivity Layer
+### 🟡 Phase 2 — Productivity Layer (Mostly Implemented)
 
 **Goal:** Eliminate repetitive metadata operations
 
-#### Additional Read-Only Fields (Implemented)
+#### Implemented
 
 * CreateDate — displayed in preview panel
 * ModifyDate — displayed in preview panel
-* ImageDescription — displayed in preview panel (synced from Description on write)
-* Caption-Abstract — displayed in preview panel (synced from Description on write)
+* ImageDescription — displayed in preview panel (synced from Description on save)
+* Caption-Abstract — displayed in preview panel (synced from Description on save)
+* **Sanitise All button** — runs the full date propagation + offset clearing + description sync pipeline
 
-#### Planned Features
+#### Still Planned
 
 * Smart actions:
 
-  * Sync all date fields (DateTimeOriginal → CreateDate → ModifyDate)
   * Copy CreateDate → DateTimeOriginal
-  * Clear OffsetTime fields
 * Column sorting in file table
-
-#### Example Write Logic
-
-```bash
-exiftool -overwrite_original \
-'-CreateDate<DateTimeOriginal' \
-'-ModifyDate<DateTimeOriginal' \
-FILE
-```
 
 ---
 

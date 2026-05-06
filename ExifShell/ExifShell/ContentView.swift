@@ -79,6 +79,12 @@ struct ContentView: View {
                 .keyboardShortcut("s", modifiers: .command)
                 .hidden()
         )
+        .background(
+            // ⌦ Delete — Remove selected files from the list
+            Button("") { viewModel.removeSelected() }
+                .keyboardShortcut(.delete, modifiers: [])
+                .hidden()
+        )
     }
 
     // MARK: - Bulk Edit Bar (DateTimeOriginal)
