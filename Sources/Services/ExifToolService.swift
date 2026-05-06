@@ -4,26 +4,96 @@ import Foundation
 /// All metadata logic is delegated to ExifTool — this is just a shell wrapper.
 enum ExifToolService {
 
+    // MARK: - ExifTool Path Resolution
+
+    /// Resolved path to the `exiftool` binary.
+    /// Searches common installation locations so the app works regardless
+    /// of whether it's launched via `swift run`, Xcode, or as a bundled .app.
+    /// (Xcode does not inherit your shell PATH, which is the most common
+    /// reason for ExifTool to appear missing.)
+    private static let exifToolPath: String = {
+        let candidates = [
+            "/opt/homebrew/bin/exiftool",   // Apple Silicon Homebrew
+            "/usr/local/bin/exiftool",      // Intel Homebrew
+            "/usr/bin/exiftool",            // System install (rare)
+            "/opt/local/bin/exiftool",      // MacPorts
+        ]
+        for path in candidates {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return path
+            }
+        }
+        // Fallback: ask `which` in case it's somewhere unusual.
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["which", "exiftool"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            if process.terminationStatus == 0 {
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                if let path = String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                    !path.isEmpty {
+                    return path
+                }
+            }
+        } catch {}
+        return ""  // Will be detected at operation time
+    }()
+
     private static let decoder: JSONDecoder = {
         let d = JSONDecoder()
         d.keyDecodingStrategy = .convertFromSnakeCase
         return d
     }()
 
+    /// Returns an error message if exiftool was not found at startup.
+    private static var missingToolError: String? {
+        guard !exifToolPath.isEmpty else {
+            return "ExifTool not found. Install it with: brew install exiftool"
+        }
+        // Also verify it's still executable (in case it was uninstalled between runs)
+        guard FileManager.default.isExecutableFile(atPath: exifToolPath) else {
+            return "ExifTool at '\(exifToolPath)' is no longer executable."
+        }
+        return nil
+    }
+
     // MARK: - Read
 
-    /// Reads `DateTimeOriginal` from a file using `exiftool -json`.
+    /// Reads `DateTimeOriginal` from a single file using `exiftool -json`.
     /// - Parameter url: The file URL to read from.
     /// - Returns: The raw DateTimeOriginal string, or nil if missing/error.
     static func readDateTimeOriginal(from url: URL) -> String? {
+        readDateTimeOriginal(from: [url])[url] ?? nil
+    }
+
+    /// Reads `DateTimeOriginal` from multiple files in a **single** ExifTool invocation.
+    ///
+    /// This is dramatically faster than calling `readDateTimeOriginal(from:)` in a loop
+    /// because ExifTool only starts up once and processes all files in one pass.
+    /// For large batches (100+ files), this can be 50–100× faster.
+    ///
+    /// - Parameter urls: The file URLs to read from.
+    /// - Returns: A dictionary mapping each URL to its DateTimeOriginal (or nil if missing/error).
+    static func readDateTimeOriginal(from urls: [URL]) -> [URL: String?] {
+        guard !urls.isEmpty else { return [:] }
+
+        if missingToolError != nil {
+            // Return all-nil so callers still get complete results
+            return Dictionary(uniqueKeysWithValues: urls.map { ($0, nil as String?) })
+        }
+
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.executableURL = URL(fileURLWithPath: exifToolPath)
         process.arguments = [
-            "exiftool",
             "-json",
-            "-DateTimeOriginal",
-            url.path
-        ]
+            "-DateTimeOriginal"
+        ] + urls.map(\.path)
 
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -33,15 +103,32 @@ enum ExifToolService {
             try process.run()
             process.waitUntilExit()
 
-            guard process.terminationStatus == 0 else { return nil }
+            guard process.terminationStatus == 0 else {
+                return Dictionary(uniqueKeysWithValues: urls.map { ($0, nil as String?) })
+            }
 
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard !data.isEmpty else { return nil }
+            guard !data.isEmpty else {
+                return Dictionary(uniqueKeysWithValues: urls.map { ($0, nil as String?) })
+            }
 
             let json = try decoder.decode([ExifToolOutput].self, from: data)
-            return json.first?.dateTimeOriginal
+
+            // Build lookup by SourceFile (filesystem path)
+            var results: [URL: String?] = [:]
+            for entry in json {
+                let url = URL(fileURLWithPath: entry.sourceFile)
+                results[url] = entry.dateTimeOriginal
+            }
+            // Ensure every input URL has an entry (default to nil if ExifTool skipped it)
+            for url in urls {
+                if !results.keys.contains(url) {
+                    results[url] = nil
+                }
+            }
+            return results
         } catch {
-            return nil
+            return Dictionary(uniqueKeysWithValues: urls.map { ($0, nil as String?) })
         }
     }
 
@@ -68,8 +155,12 @@ enum ExifToolService {
             return WriteResult(success: false, output: "No files provided.")
         }
 
+        if let error = missingToolError {
+            return WriteResult(success: false, output: error)
+        }
+
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.executableURL = URL(fileURLWithPath: exifToolPath)
 
         // Build the tag=value argument. Explicitly target EXIF:DateTimeOriginal
         // to ensure we write the EXIF tag and not a derived/copied variant.
@@ -78,7 +169,6 @@ enum ExifToolService {
         let tagArg = "-EXIF:DateTimeOriginal=\(value)"
 
         var args = [
-            "exiftool",
             "-overwrite_original",
             tagArg
         ]

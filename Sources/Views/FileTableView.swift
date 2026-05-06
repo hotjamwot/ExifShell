@@ -2,10 +2,10 @@ import SwiftUI
 
 struct FileTableView: View {
     let viewModel: FileListViewModel
-    @State private var selectedID: ImageFile.ID?
+    @State private var selectedIDs: Set<ImageFile.ID> = []
 
     var body: some View {
-        List(selection: $selectedID) {
+        List(selection: $selectedIDs) {
             ForEach(viewModel.files) { file in
                 @Bindable var bindableFile = file
                 TableRowView(
@@ -17,12 +17,15 @@ struct FileTableView: View {
             }
         }
         .listStyle(.bordered(alternatesRowBackgrounds: true))
-        .onChange(of: selectedID) { _, newValue in
-            if let id = newValue {
-                viewModel.select(viewModel.files.first { $0.id == id })
+        .onChange(of: selectedIDs) { _, newValue in
+            // Update single selection for the preview panel (first selected)
+            if let firstID = newValue.first {
+                viewModel.select(viewModel.files.first { $0.id == firstID })
             } else {
                 viewModel.select(nil)
             }
+            // Update multi-selection for bulk edit
+            viewModel.selectedFiles = viewModel.files.filter { newValue.contains($0.id) }
         }
     }
 }

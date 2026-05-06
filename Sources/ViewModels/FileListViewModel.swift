@@ -10,9 +10,13 @@ class FileListViewModel {
     var selectedFile: ImageFile? {
         didSet { clearFeedback() }
     }
+    var selectedFiles: [ImageFile] = []
     var isLoading = false
     var statusMessage: String?
     var lastSaveFeedback: SaveFeedback?
+
+    /// The bulk-edit value being typed (shown in the toolbar when multiple files are selected).
+    var bulkEditValue: String = ""
 
     struct SaveFeedback: Equatable {
         let filename: String
@@ -39,9 +43,12 @@ class FileListViewModel {
         isLoading = true
         statusMessage = nil
 
+        // Batch-read all new files in a single ExifTool invocation (much faster)
+        let metadata = ExifToolService.readDateTimeOriginal(from: newURLs)
+
         let newFiles = newURLs.map { url in
-            let dto = ExifToolService.readDateTimeOriginal(from: url) ?? ""
-            return ImageFile(url: url, dateTimeOriginal: dto)
+            let dto = metadata[url] ?? nil
+            return ImageFile(url: url, dateTimeOriginal: dto ?? "")
         }
 
         files.append(contentsOf: newFiles)
@@ -62,6 +69,18 @@ class FileListViewModel {
         importFiles(urls)
     }
 
+    // MARK: - Clear
+
+    /// Removes all loaded files and resets state.
+    func clearAll() {
+        files.removeAll()
+        selectedFile = nil
+        selectedFiles = []
+        lastSaveFeedback = nil
+        statusMessage = nil
+        bulkEditValue = ""
+    }
+
     // MARK: - Selection & Feedback
 
     func select(_ file: ImageFile?) {
@@ -74,7 +93,27 @@ class FileListViewModel {
         statusMessage = nil
     }
 
-    // MARK: - Single Save
+    // MARK: - Bulk Edit
+
+    /// Applies the current `bulkEditValue` to all currently selected files.
+    func applyBulkEdit() {
+        let value = bulkEditValue.trimmingCharacters(in: .whitespaces)
+        guard !value.isEmpty else {
+            statusMessage = "Enter a date value before applying."
+            return
+        }
+        let targets = selectedFiles.filter { $0.dateTimeOriginal != value }
+        guard !targets.isEmpty else {
+            statusMessage = "All selected files already have this value."
+            return
+        }
+        for file in targets {
+            file.dateTimeOriginal = value
+        }
+        statusMessage = "Applied to \(targets.count) file(s)."
+    }
+
+    // MARK: - Save
 
     /// The number of files with unsaved changes.
     var dirtyCount: Int { files.filter(\.isDirty).count }

@@ -14,12 +14,15 @@ All state management uses Apple's `@Observable` macro (macOS 14+ Observation fra
                    │
 ┌──────────────────▼─────────────────────────────┐
 │                 ContentView                     │
-│         (Root view, own drop handling)          │
+│   (Root view, own drop handling, bulk edit     │
+│    bar, status bar, ⌘K/⌘S keyboard shortcuts)  │
 └──────┬───────────────────────────┬─────────────┘
        │                           │
 ┌──────▼──────────┐     ┌─────────▼───────────┐
 │  FileTableView   │     │    PreviewPanel      │
-│  (editable List) │     │  (Thumbnail + Diff)  │
+│ (editable List   │     │ (Thumbnail + Diff,  │
+│  with multi-     │     │  single Save btn)   │
+│  select support) │     │                     │
 └──────┬──────────┘     └─────────┬───────────┘
        │                          │
        └──────────┬───────────────┘
@@ -29,12 +32,18 @@ All state management uses Apple's `@Observable` macro (macOS 14+ Observation fra
        │  @Observable class       │
        │  var files: [ImageFile]  │
        │  var selectedFile        │
+       │  var selectedFiles: []   │  ← multi-select
+       │  var bulkEditValue       │  ← bulk edit
+       │  clearAll()              │  ← ⌘K
+       │  applyBulkEdit()         │  ← multi-file set
        └──────────┬───────────────┘
                   │ calls
        ┌──────────▼───────────────┐
        │     ExifToolService       │
-       │  readDateTimeOriginal()  │
+       │  readDateTimeOriginal()  │  ← single or batch
        │  writeDateTimeOriginal() │
+       │  + batch read (from:)    │  ← [URL] → [URL: String?]
+       │  + exifToolPath          │  ← auto-resolved
        └──────────┬───────────────┘
                   │ spawns process
        ┌──────────▼───────────────┐
@@ -48,16 +57,16 @@ All state management uses Apple's `@Observable` macro (macOS 14+ Observation fra
 ```
 Sources/
 ├── ExifShellApp.swift          # @main app entry point, activation policy
-├── ContentView.swift            # Root view: empty drop zone or split pane + drop handling
+├── ContentView.swift           # Root view: drop zone ↔ split pane + drop, bulk edit, status, shortcuts
 ├── Models/
 │   └── ImageFile.swift         # @Observable class per image with dirty tracking
 ├── ViewModels/
-│   └── FileListViewModel.swift # @Observable class: state, import, save, feedback
+│   └── FileListViewModel.swift # @Observable class: state, import (batch read), save, bulk edit, clear
 ├── Services/
-│   └── ExifToolService.swift   # Shell wrapper for exiftool (read/write)
+│   └── ExifToolService.swift   # Shell wrapper (auto-resolved path, batch reads & writes)
 └── Views/
     ├── DropZoneView.swift      # Visual drop zone (drop logic in ContentView)
-    ├── FileTableView.swift     # List with editable DateTimeOriginal + orange dirty indicator
+    ├── FileTableView.swift     # List with editable DateTimeOriginal + orange dirty + multi-select
     └── PreviewPanel.swift      # Thumbnail + diff review + single Save button
 ```
 
@@ -72,7 +81,9 @@ Sources/
 - Identifiable (UUID) and Hashable for List selection.
 
 ### ExifToolService (Service Layer)
-- **Read:** Calls `exiftool -json -DateTimeOriginal <file>` and decodes the JSON response.
+- **Path resolution:** Locates `exiftool` at static init time by checking common paths (`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/opt/local/bin`) and falling back to `which exiftool`. This ensures the app works from Terminal, Xcode, or a bundled `.app` regardless of PATH.
+- **Read (single):** `readDateTimeOriginal(from url:)` — delegates to the batch version.
+- **Read (batch):** `readDateTimeOriginal(from urls:)` — calls `exiftool -json -DateTimeOriginal <files...>` once for all files, decodes JSON, returns a `[URL: String?]` dictionary. This is ~50–100× faster for large batches.
 - **Write:** Calls `exiftool -overwrite_original -EXIF:DateTimeOriginal="<value>" <file1> <file2> ...` — uses the `EXIF:` group specifier to target the correct EXIF tag (not derived fields like CreateDate or IPTC data).
 - Supports batch writes: accepts `[URL]` so multiple files with the same value are sent in a single process invocation.
 - Returns a `WriteResult` struct with `success: Bool` and `output: String` (captured stdout/stderr for error reporting).
@@ -82,7 +93,11 @@ Sources/
 - `@Observable` class with `@MainActor`.
 - `var files: [ImageFile]` — the source of truth for the file list.
 - `var selectedFile: ImageFile?` — `didSet` triggers `clearFeedback()`, which clears save confirmation and status when navigating to a different file.
-- `importFiles(_:)` / `importFolder(_:)` — validates image types via extension check, deduplicates by URL, reads metadata, appends to array.
+- `var selectedFiles: [ImageFile]` — holds multi-selection for bulk edit.
+- `var bulkEditValue: String` — the text field value from the bulk edit bar.
+- `importFiles(_:)` / `importFolder(_:)` — validates image types via extension check, deduplicates by URL, batch-reads metadata via `ExifToolService.readDateTimeOriginal(from:)`, appends to array.
+- `clearAll()` — removes all files and resets state (⌘K shortcut).
+- `applyBulkEdit()` — sets `dateTimeOriginal` on all `selectedFiles` to `bulkEditValue`.
 - `saveAll()` — the single save method. Groups dirty files by `dateTimeOriginal` value and calls `ExifToolService.writeDateTimeOriginal()` once per group. Updates `lastSaveFeedback` with before/after details.
 - `dirtyCount: Int` — computed property for button label and feedback.
 - `lastSaveFeedback: SaveFeedback?` — holds the most recent save result for display in the preview panel.
@@ -93,9 +108,10 @@ Sources/
 
 ### FileTableView
 - SwiftUI `List` (not `Table` — `List` gives reliable bindings with `@Observable`).
+- Uses `Set<ImageFile.ID>` for `selection`, enabling multi-select via ⌘+click.
 - Uses `@Bindable` to create a `$binding` for each file's `dateTimeOriginal`.
 - **Orange text:** The DateTimeOriginal `TextField` uses `.foregroundColor(isDirty ? .orange : .primary)` to clearly indicate unsaved changes.
-- Selection syncs to `viewModel.selectedFile` via `onChange(of: selectedID)`.
+- Selection syncs to both `viewModel.selectedFile` (preview) and `viewModel.selectedFiles` (bulk edit) via `onChange(of: selectedIDs)`.
 
 ### PreviewPanel
 - Shows thumbnail (loaded via `NSImage(contentsOf:)`).
@@ -104,20 +120,37 @@ Sources/
 - **Save feedback:** After a successful save, shows a green badge with `"old → new"` — this clears automatically when navigating to a different file.
 - **Single Save button:** One button labelled "Save Changes (N)" showing the dirty count. Disabled when nothing is dirty. Keyboard shortcut: `⌘S`.
 
+### ContentView (Root)
+- Manages the empty state (DropZoneView) vs loaded state (HSplitView with table + preview).
+- **Bulk edit bar:** When `viewModel.selectedFiles.count > 1`, shows a HStack with a text field and "Apply" button above the table.
+- **Status bar:** Shows the current `statusMessage` and a `ProgressView` when loading.
+- **Drop handling:** `onDrop(of:)` resolves URLs, separates files from folders, and calls the ViewModel.
+- **App-wide keyboard shortcuts:** Two hidden `.background(Button(...).keyboardShortcut(...))` modifiers:
+  - `⌘K` → `viewModel.clearAll()`
+  - `⌘S` → `viewModel.saveAll()`
+
 ## Data Flow
 
-1. **Import:** User drops files → `ContentView.onDrop` resolves URLs → ViewModel filters by extension, deduplicates, calls `ExifToolService.readDateTimeOriginal()` per file → results populate list.
-2. **Edit:** User clicks into the DateTimeOriginal `TextField` in the list → edits value → binding writes to the `@Observable` model → `didSet` marks file dirty → UI auto-updates (orange text, preview diff appears).
-3. **Review:** Preview panel shows grey (current) → green (proposed) diff with the exact before/after values.
-4. **Save:** User presses `⌘S` or clicks "Save Changes" → ViewModel groups dirty files by value → `ExifToolService.writeDateTimeOriginal(value, to: urls)` called once per group → on success, `markClean()` resets each file → feedback shown → navigating away clears feedback.
+1. **Import:** User drops files → `ContentView.onDrop` resolves URLs → ViewModel filters by extension, deduplicates, batch-reads metadata via `ExifToolService.readDateTimeOriginal(from:)` (single process call) → results populate list.
+2. **Edit (single):** User clicks into the DateTimeOriginal `TextField` → edits value → binding writes to the `@Observable` model → `didSet` marks file dirty → UI auto-updates.
+3. **Edit (bulk):** User selects multiple files (⌘+click) → bulk edit bar appears → types a value → presses Enter or "Apply" → `applyBulkEdit()` sets value on all selected files.
+4. **Review:** Preview panel shows grey (current) → green (proposed) diff.
+5. **Save:** User presses `⌘S` → ViewModel groups dirty files by value → `ExifToolService.writeDateTimeOriginal()` called once per group → on success, `markClean()` resets each file.
+6. **Clear:** User presses `⌘K` → `clearAll()` removes all files, returns to drop zone.
 
 ## Key Design Decisions
 
-### Batch Writes
-ExifTool can process multiple files in a single invocation. The service layer accepts `[URL]` for writes. The ViewModel groups dirty files by identical `DateTimeOriginal` values to minimize process spawns.
+### Batch Reads
+ExifTool can process multiple files in a single invocation. The service layer accepts `[URL]` for both reads and writes, reducing process spawn overhead dramatically.
+
+### ExifTool Path Resolution
+The app does not rely on PATH propagation (which breaks in Xcode). Instead it checks common Homebrew/MacPorts install paths at startup and falls back to `which`.
+
+### Multi-Select & Bulk Edit
+The file table uses SwiftUI `List` with `Set<ImageFile.ID>` selection. The ViewModel tracks both `selectedFile` (for preview) and `selectedFiles` (for bulk edit). A bulk edit bar appears in ContentView when 2+ files are selected.
 
 ### Dirty State Pattern
-Editing marks a file dirty — nothing is written to disk until the user explicitly saves. This prevents accidental overwrites. Dirty files show orange text in the table and a diff in the preview panel.
+Editing marks a file dirty — nothing is written to disk until the user explicitly saves. This prevents accidental overwrites.
 
 ### No Local Image Database
 Images are loaded from their original paths. No caching, no library management. The user's filesystem is the source of truth.
@@ -126,7 +159,7 @@ Images are loaded from their original paths. No caching, no library management. 
 All metadata operations are delegated to `exiftool`. The app never interprets or transforms date strings — it passes them through exactly as entered.
 
 ### @Observable over ObservableObject
-Using the `@Observable` macro (macOS 14+) instead of `@Published`/`ObservableObject` avoids the "field jumps back on enter" bug that plagues struct-based bindings in SwiftUI `List`/`Table` views. References types with `@Observable` give rock-solid two-way bindings.
+Using the `@Observable` macro (macOS 14+) instead of `@Published`/`ObservableObject` avoids the "field jumps back on enter" bug that plagues struct-based bindings in SwiftUI `List`/`Table` views. Reference types with `@Observable` give rock-solid two-way bindings.
 
 ### Explicit EXIF Tag Targeting
 Write commands use `-EXIF:DateTimeOriginal=` rather than `-DateTimeOriginal=`. This prevents ExifTool from writing to related fields (CreateDate, ModifyDate, IPTC date/time fields) when it auto-derives them from the tag name.
@@ -134,7 +167,7 @@ Write commands use `-EXIF:DateTimeOriginal=` rather than `-DateTimeOriginal=`. T
 ## Dependencies
 
 - **Swift 5.9+ / macOS 14+** — `@Observable`, SwiftUI `List`, `Hashable`.
-- **ExifTool** — Must be installed and available on `$PATH` (`brew install exiftool`). Not bundled with the app.
+- **ExifTool** — Must be installed. Not bundled with the app.
 
 ## Build & Run
 
@@ -142,4 +175,13 @@ Write commands use `-EXIF:DateTimeOriginal=` rather than `-DateTimeOriginal=`. T
 swift run
 ```
 
-Or open in Xcode and run.
+Or open `Package.swift` in Xcode and run.
+
+## Keyboard Shortcuts
+
+| Shortcut | Scope | Action |
+|----------|-------|--------|
+| `⌘S` | App-wide | Save all dirty files |
+| `⌘K` | App-wide | Clear all files / drop zone |
+| `⌘+click` | Table | Toggle multi-select |
+| `Return` | Bulk edit bar | Apply bulk edit value |

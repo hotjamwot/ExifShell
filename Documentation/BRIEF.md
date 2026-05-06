@@ -142,15 +142,18 @@ User can:
 
   * Filename
   * DateTimeOriginal
-* File selection
+* File selection (single and multi-select via ⌘+click)
 * Thumbnail preview (single image)
-* Editable DateTimeOriginal field
+* Editable DateTimeOriginal field (inline in table)
+* **Bulk edit** — set DateTimeOriginal on multiple selected files at once
+* Batch ExifTool reads — all files processed in a single command for speed
 * Apply changes:
 
-  * Selected files
-  * All files
+  * ⌘S (app-wide shortcut)
+  * Save button in preview panel
+* ⌘K — clear all files / reset to drop zone
 
-#### Backend व्यवहार (via ExifTool)
+#### Backend (via ExifTool)
 
 * Read:
 
@@ -177,14 +180,13 @@ User can:
 
 #### Features
 
-* Inline editing in table
-* Multi-select editing
 * Smart actions:
 
   * Sync all date fields
   * Copy CreateDate → DateTimeOriginal
   * Clear OffsetTime fields
 * Description writing across EXIF/IPTC/XMP
+* Column sorting in file table
 
 #### Example Write Logic
 

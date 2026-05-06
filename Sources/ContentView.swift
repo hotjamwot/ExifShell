@@ -14,8 +14,33 @@ struct ContentView: View {
             } else {
                 // Loaded state: show table + preview
                 HSplitView {
-                    FileTableView(viewModel: viewModel)
-                        .frame(minWidth: 320)
+                    VStack(spacing: 0) {
+                        // Bulk edit bar — visible when multiple files are selected
+                        if viewModel.selectedFiles.count > 1 {
+                            bulkEditBar
+                        }
+
+                        FileTableView(viewModel: viewModel)
+                            .frame(minWidth: 320)
+
+                        // Status bar
+                        if let status = viewModel.statusMessage {
+                            HStack {
+                                Text(status)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                if viewModel.isLoading {
+                                    ProgressView()
+                                        .scaleEffect(0.7)
+                                        .controlSize(.small)
+                                }
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.gray.opacity(0.05))
+                        }
+                    }
 
                     PreviewPanel(viewModel: viewModel)
                         .frame(minWidth: 280)
@@ -38,7 +63,54 @@ struct ContentView: View {
             isTargeted: $isTargeted,
             perform: handleDrop
         )
+        // App-wide keyboard shortcuts
+        .background(
+            // ⌘K — Clear all files
+            Button("") { viewModel.clearAll() }
+                .keyboardShortcut("k", modifiers: .command)
+                .hidden()
+        )
+        .background(
+            // ⌘S — Save all dirty files (works even when preview panel is not visible)
+            Button("") { viewModel.saveAll() }
+                .keyboardShortcut("s", modifiers: .command)
+                .hidden()
+        )
     }
+
+    // MARK: - Bulk Edit Bar
+
+    @ViewBuilder
+    private var bulkEditBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "pencil")
+                .foregroundColor(.secondary)
+                .font(.caption)
+
+            Text("Set DateTimeOriginal for \(viewModel.selectedFiles.count) selected file(s):")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            TextField("e.g. 2024:01:15 14:30:00", text: $viewModel.bulkEditValue)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.caption, design: .monospaced))
+                .frame(width: 200)
+                .onSubmit { viewModel.applyBulkEdit() }
+
+            Button("Apply") {
+                viewModel.applyBulkEdit()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            Spacer()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color.accentColor.opacity(0.06))
+    }
+
+    // MARK: - Drop Handling
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
         let group = DispatchGroup()
