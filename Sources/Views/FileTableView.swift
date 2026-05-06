@@ -46,13 +46,8 @@ private struct TableRowView: View {
             TextField("Date/Time Original", text: $dateTimeOriginal)
                 .textFieldStyle(.plain)
                 .font(.system(.body, design: .monospaced))
+                .foregroundColor(isDirty ? .orange : .primary)
                 .frame(minWidth: 180)
-
-            if isDirty {
-                Text("•")
-                    .foregroundColor(.orange)
-                    .font(.caption)
-            }
         }
         .padding(.vertical, 2)
     }

@@ -12,13 +12,13 @@ A minimal, high-speed macOS application for inspecting and editing image metadat
 ## Minimal Viable Feature Set
 
 - Drag & drop images or folders
-- View `DateTimeOriginal` metadata in a sortable table
-- Click to edit `DateTimeOriginal` inline
-- Files are **marked dirty** on edit — no accidental writes
-- **Apply to Selected** — saves only the currently selected file
-- **Apply to All** — saves all dirty files in a single batch per unique value
+- View and edit `DateTimeOriginal` metadata in a sortable table
+- Files are **marked dirty** on edit — orange text in the table signals unsaved changes
+- **Diff review** — preview panel shows grey (current) → green (proposed) before you save
+- **Single Save button** — saves all dirty files in efficient batch writes per unique value
 - Thumbnail preview of selected image
-- Keyboard shortcuts: `⌘S` (apply selected), `⇧⌘S` (apply all)
+- Save confirmation with before/after values (clears on navigation)
+- Keyboard shortcut: `⌘S`
 
 ## How to Run
 

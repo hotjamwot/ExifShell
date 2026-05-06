@@ -7,7 +7,9 @@ import UniformTypeIdentifiers
 class FileListViewModel {
 
     var files: [ImageFile] = []
-    var selectedFile: ImageFile?
+    var selectedFile: ImageFile? {
+        didSet { clearFeedback() }
+    }
     var isLoading = false
     var statusMessage: String?
     var lastSaveFeedback: SaveFeedback?
@@ -60,10 +62,16 @@ class FileListViewModel {
         importFiles(urls)
     }
 
-    // MARK: - Selection
+    // MARK: - Selection & Feedback
 
     func select(_ file: ImageFile?) {
         selectedFile = file
+    }
+
+    /// Clears transient save feedback when navigating away or re-selecting.
+    private func clearFeedback() {
+        lastSaveFeedback = nil
+        statusMessage = nil
     }
 
     // MARK: - Single Save
