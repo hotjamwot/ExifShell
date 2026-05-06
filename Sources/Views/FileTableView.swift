@@ -1,24 +1,22 @@
 import SwiftUI
 
 struct FileTableView: View {
-    @ObservedObject var viewModel: FileListViewModel
+    let viewModel: FileListViewModel
+    @State private var selectedID: ImageFile.ID?
 
     var body: some View {
-        Table(viewModel.files, selection: $selectedID) {
-            TableColumn("Filename") { file in
-                Text(file.filename)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+        List(selection: $selectedID) {
+            ForEach(viewModel.files) { file in
+                @Bindable var bindableFile = file
+                TableRowView(
+                    filename: file.filename,
+                    dateTimeOriginal: $bindableFile.dateTimeOriginal,
+                    isDirty: file.isDirty
+                )
+                .id(file.id)
             }
-            .width(min: 120)
-
-            TableColumn("Date/Time Original") { file in
-                TextField("", text: binding(for: file))
-                    .textFieldStyle(.plain)
-                    .font(.system(.body, design: .monospaced))
-            }
-            .width(min: 180)
         }
+        .listStyle(.bordered(alternatesRowBackgrounds: true))
         .onChange(of: selectedID) { _, newValue in
             if let id = newValue {
                 viewModel.select(viewModel.files.first { $0.id == id })
@@ -27,16 +25,35 @@ struct FileTableView: View {
             }
         }
     }
+}
 
-    @State private var selectedID: ImageFile.ID?
+// MARK: - Table Row
 
-    private func binding(for file: ImageFile) -> Binding<String> {
-        Binding {
-            file.dateTimeOriginal
-        } set: { newValue in
-            if let idx = viewModel.files.firstIndex(where: { $0.id == file.id }) {
-                viewModel.files[idx].dateTimeOriginal = newValue
+private struct TableRowView: View {
+    let filename: String
+    @Binding var dateTimeOriginal: String
+    let isDirty: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(filename)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(minWidth: 120, alignment: .leading)
+
+            Divider()
+
+            TextField("Date/Time Original", text: $dateTimeOriginal)
+                .textFieldStyle(.plain)
+                .font(.system(.body, design: .monospaced))
+                .frame(minWidth: 180)
+
+            if isDirty {
+                Text("•")
+                    .foregroundColor(.orange)
+                    .font(.caption)
             }
         }
+        .padding(.vertical, 2)
     }
 }

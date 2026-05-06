@@ -1,16 +1,17 @@
 import Foundation
 import AppKit
+import Observation
 
-struct ImageFile: Identifiable, Hashable {
+@Observable
+final class ImageFile: Identifiable, Hashable {
     let id = UUID()
     let url: URL
     let filename: String
 
-    /// The last-saved DateTimeOriginal value. Used as the dirty baseline.
+    /// The last-saved DateTimeOriginal value.
     private(set) var originalDateTimeOriginal: String
 
-    /// The current (possibly edited) DateTimeOriginal value.
-    /// Setting this automatically marks the file as dirty if the value differs.
+    /// The current (possibly edited) value.
     var dateTimeOriginal: String {
         didSet {
             if dateTimeOriginal != originalDateTimeOriginal {
@@ -33,11 +34,12 @@ struct ImageFile: Identifiable, Hashable {
     }
 
     /// Marks the file as clean after a successful write.
-    /// Resets the baseline to the current value and clears the dirty flag.
-    mutating func markClean() {
+    func markClean() {
         originalDateTimeOriginal = dateTimeOriginal
         isDirty = false
     }
+
+    // MARK: - Hashable
 
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)

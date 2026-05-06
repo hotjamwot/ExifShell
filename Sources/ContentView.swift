@@ -2,7 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ContentView: View {
-    @StateObject private var viewModel = FileListViewModel()
+    @State private var viewModel = FileListViewModel()
     @State private var isTargeted = false
 
     var body: some View {

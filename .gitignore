@@ -60,3 +60,28 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+
+# macOS System Files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python (if ExifShell uses it)
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Shell/Scripts
+*.log
+*.tmp
+
+# Exif/Media specific (Don't track your test images/videos!)
+# It's better to keep your test assets in a folder and ignore that folder
+/tests/assets/
+*.jpg
+*.png
+*.mov

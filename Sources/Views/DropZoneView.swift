@@ -3,7 +3,7 @@ import SwiftUI
 /// Visual drop zone shown when no files are loaded.
 /// Drop handling is owned by ContentView.
 struct DropZoneView: View {
-    @ObservedObject var viewModel: FileListViewModel
+    let viewModel: FileListViewModel
 
     var body: some View {
         ZStack {
