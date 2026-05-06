@@ -40,11 +40,11 @@ private struct TableRowView: View {
     let isDirty: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 0) {
             Text(filename)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(minWidth: 100, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             Divider()
 
@@ -52,7 +52,8 @@ private struct TableRowView: View {
                 .textFieldStyle(.plain)
                 .font(.system(.body, design: .monospaced))
                 .foregroundColor(isDirty ? .orange : .primary)
-                .frame(minWidth: 160)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 8)
                 .help("DateTimeOriginal (EXIF tag)")
 
             Divider()
@@ -61,7 +62,8 @@ private struct TableRowView: View {
                 .textFieldStyle(.plain)
                 .font(.system(.body, design: .monospaced))
                 .foregroundColor(isDirty ? .orange : .primary)
-                .frame(minWidth: 160)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 8)
                 .help("Description — written to Description, ImageDescription & Caption-Abstract on save")
         }
         .padding(.vertical, 2)

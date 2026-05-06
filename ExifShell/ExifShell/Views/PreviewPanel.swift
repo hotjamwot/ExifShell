@@ -4,105 +4,81 @@ struct PreviewPanel: View {
     let viewModel: FileListViewModel
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 0) {
             if let file = viewModel.selectedFile {
                 ScrollView {
-                    VStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 20) {
                         // Header
                         Text(file.filename)
                             .font(.headline)
                             .lineLimit(1)
                             .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
 
                         // Thumbnail
                         if let image = file.thumbnail {
                             Image(nsImage: image)
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
-                                .frame(maxWidth: 400, maxHeight: 300)
-                                .cornerRadius(8)
-                                .shadow(radius: 2)
+                                .frame(maxHeight: 240)
+                                .cornerRadius(6)
                         } else {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.gray.opacity(0.2))
-                                .frame(maxWidth: 400, maxHeight: 300)
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.gray.opacity(0.15))
+                                .frame(height: 160)
                                 .overlay(
                                     Image(systemName: "photo")
-                                        .font(.largeTitle)
+                                        .font(.title2)
                                         .foregroundColor(.secondary)
                                 )
                         }
 
-                        // --- Editable Fields Section ---
-
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Editable Fields")
+                        // --- Editable Fields ---
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text("Editable")
                                 .font(.caption.weight(.semibold))
                                 .foregroundColor(.secondary)
+                                .textCase(.uppercase)
 
-                            // DateTimeOriginal diff overlay
-                            fieldDiffView(
+                            fieldDiffRow(
                                 label: "Date/Time Original",
                                 original: file.originalDateTimeOriginal,
                                 current: file.dateTimeOriginal,
                                 isDirty: file.isDirty && file.dateTimeOriginal != file.originalDateTimeOriginal
                             )
 
-                            // Description diff overlay
-                            fieldDiffView(
+                            fieldDiffRow(
                                 label: "Description",
                                 original: file.originalDescription,
                                 current: file.description,
                                 isDirty: file.isDirty && file.description != file.originalDescription
                             )
                         }
-                        .padding(.horizontal)
 
-                        // --- Read-Only Fields Section ---
+                        Divider()
 
+                        // --- Read-Only Metadata ---
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("Read-Only Metadata")
+                            Text("Metadata")
                                 .font(.caption.weight(.semibold))
                                 .foregroundColor(.secondary)
+                                .textCase(.uppercase)
 
-                            readOnlyFieldView(label: "Create Date", value: file.createDate)
-                            readOnlyFieldView(label: "Modify Date", value: file.modifyDate)
-                            readOnlyFieldView(label: "ImageDescription", value: file.imageDescription)
-                            readOnlyFieldView(label: "Caption-Abstract", value: file.captionAbstract)
+                            metadataRow(label: "Create Date", value: file.createDate)
+                            metadataRow(label: "Modify Date", value: file.modifyDate)
+                            metadataRow(label: "Image Description", value: file.imageDescription)
+                            metadataRow(label: "Caption Abstract", value: file.captionAbstract)
                         }
-                        .padding(.horizontal)
 
-                        // --- Save Feedback Section ---
-
-                        // DateTimeOriginal save feedback
+                        // --- Save Feedback ---
                         if let feedback = viewModel.lastSaveFeedback {
-                            HStack(spacing: 6) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.green)
-                                Text("DTO: \(feedback.from) → \(feedback.to)")
-                                    .font(.system(.caption, design: .monospaced))
-                                    .foregroundColor(.green)
-                            }
-                            .padding(8)
-                            .background(Color.green.opacity(0.1))
-                            .cornerRadius(6)
+                            saveFeedbackRow(label: "DTO", feedback: feedback)
                         }
-
-                        // Description save feedback
                         if let feedback = viewModel.lastDescriptionSaveFeedback {
-                            HStack(spacing: 6) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.green)
-                                Text("Desc: \(feedback.from) → \(feedback.to)")
-                                    .font(.system(.caption, design: .monospaced))
-                                    .foregroundColor(.green)
-                            }
-                            .padding(8)
-                            .background(Color.green.opacity(0.1))
-                            .cornerRadius(6)
+                            saveFeedbackRow(label: "Desc", feedback: feedback)
                         }
 
-                        // Single Save button
+                        // Save button
                         Button {
                             viewModel.saveAll()
                         } label: {
@@ -118,23 +94,22 @@ struct PreviewPanel: View {
                         .disabled(viewModel.dirtyCount == 0)
                         .buttonStyle(.borderedProminent)
                         .controlSize(.regular)
-                        .padding(.horizontal)
 
                         // Status
                         if let status = viewModel.statusMessage {
                             Text(status)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                                .padding(.top, 2)
                         }
                     }
                     .padding()
                 }
             } else {
                 VStack(spacing: 8) {
-                    Text("Select a file to review")
+                    Spacer()
+                    Text("Select a file")
                         .foregroundColor(.secondary)
-                    Text("Edit metadata in the table, then review the diff here before saving")
+                    Text("Edit metadata in the table, then review here before saving")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -144,72 +119,68 @@ struct PreviewPanel: View {
                             .font(.caption)
                             .foregroundColor(.orange)
                     }
+                    Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .padding()
-        .frame(minWidth: 300)
+        .frame(minWidth: 280)
     }
 
     // MARK: - Field Views
 
-    /// Renders a field with original→current diff when dirty.
+    /// A clean diff row: label above, then original (strikethrough) → current (green) when dirty.
     @ViewBuilder
-    private func fieldDiffView(label: String, original: String, current: String, isDirty: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(.caption)
-                .foregroundColor(.secondary)
-
-            if isDirty {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(original.isEmpty ? "(empty)" : original)
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundColor(.gray)
-                        .strikethrough()
-
-                    Text(current)
-                        .font(.system(.body, design: .monospaced, weight: .semibold))
-                        .foregroundColor(.green)
-                }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.green.opacity(0.06))
-                )
-            } else {
-                Text(current.isEmpty ? "(empty)" : current)
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundColor(.primary)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.gray.opacity(0.06))
-                    )
-            }
-        }
-    }
-
-    /// Renders a read-only metadata field.
-    @ViewBuilder
-    private func readOnlyFieldView(label: String, value: String?) -> some View {
+    private func fieldDiffRow(label: String, original: String, current: String, isDirty: Bool) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
                 .font(.caption)
                 .foregroundColor(.secondary)
 
-            Text(value?.isEmpty == false ? value! : "(not set)")
+            if isDirty {
+                Text(original.isEmpty ? "(empty)" : original)
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundColor(.gray)
+                    .strikethrough()
+                Text(current)
+                    .font(.system(.body, design: .monospaced, weight: .semibold))
+                    .foregroundColor(.green)
+            } else {
+                Text(current.isEmpty ? "(empty)" : current)
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundColor(.primary)
+            }
+        }
+    }
+
+    /// A read-only metadata row: label + monospaced value.
+    @ViewBuilder
+    private func metadataRow(label: String, value: String?) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Text(value?.isEmpty == false ? value! : "—")
                 .font(.system(.body, design: .monospaced))
                 .foregroundColor(.primary)
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.gray.opacity(0.04))
-                )
         }
+    }
+
+    /// Save feedback badge.
+    @ViewBuilder
+    private func saveFeedbackRow(label: String, feedback: FileListViewModel.SaveFeedback) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(.green)
+                .font(.caption)
+            Text("\(label): \(feedback.from) → \(feedback.to)")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundColor(.green)
+        }
+        .padding(6)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color.green.opacity(0.08))
+        )
     }
 }
