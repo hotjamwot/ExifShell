@@ -91,20 +91,21 @@ With zero need to think about:
 * Files appear in a table view:
 
   * Filename
-  * DateTimeOriginal
-  * Description (Phase 2)
+  * DateTimeOriginal (editable)
+  * Description (editable)
 * Selecting a file shows:
 
   * Thumbnail preview
-  * Editable metadata fields
+  * Editable metadata fields (DateTimeOriginal + Description with diff)
+  * Read-only metadata (Create Date, Modify Date, ImageDescription, Caption-Abstract)
 
 ---
 
 ### 3. Edit
 
-* User clicks into a field (e.g. DateTimeOriginal)
+* User clicks into a field (e.g. DateTimeOriginal or Description)
 * Edits value directly
-* App automatically formats input correctly
+* Both fields independently track dirty state
 
 ---
 
@@ -112,26 +113,25 @@ With zero need to think about:
 
 User can:
 
-* Apply changes to selected files
-* Apply changes to all files
+* Apply changes to selected files (single or bulk)
+* Use bulk edit bars for date and description when multiple files are selected
 * Use keyboard shortcut (⌘S)
 
 ---
 
-### 5. Batch Operations (Phase 2)
+### 5. Batch Operations
 
-* Sync DateTimeOriginal → CreateDate → ModifyDate
-* Copy between fields
-* Clear offsets
-* Apply descriptions across multiple files
-
----
-
-## 🧱 Feature Roadmap
+* Bulk edit DateTimeOriginal across selected files
+* Bulk edit Description across selected files
+* Save groups dirty files by unique value for efficient batch writes
 
 ---
 
-### 🟢 Phase 1 — Minimal Viable Tool
+## 🧱 Feature Status
+
+---
+
+### ✅ Phase 1 — Minimal Viable Tool (Implemented)
 
 **Goal:** Replace terminal for basic date editing
 
@@ -141,29 +141,47 @@ User can:
 * File list (table):
 
   * Filename
-  * DateTimeOriginal
+  * DateTimeOriginal (editable)
+  * Description (editable — new)
 * File selection (single and multi-select via ⌘+click)
 * Thumbnail preview (single image)
 * Editable DateTimeOriginal field (inline in table)
+* Editable Description field (inline in table — new)
 * **Bulk edit** — set DateTimeOriginal on multiple selected files at once
-* Batch ExifTool reads — all files processed in a single command for speed
+* **Bulk edit description** — set Description on multiple selected files at once (new)
+* Batch ExifTool reads — all metadata (6 tags) processed in a single command for speed
+* Preview panel shows:
+
+  * DateTimeOriginal diff (grey → green when dirty)
+  * Description diff (grey → green when dirty)
+  * Read-only Create Date, Modify Date, ImageDescription, Caption-Abstract (new)
 * Apply changes:
 
   * ⌘S (app-wide shortcut)
   * Save button in preview panel
 * ⌘K — clear all files / reset to drop zone
+* Larger default window size (1100×680 — new)
 
 #### Backend (via ExifTool)
 
-* Read:
+* Read (full metadata):
 
   ```bash
-  exiftool -json FILE
+  exiftool -json -DateTimeOriginal -CreateDate -ModifyDate \
+    -Description -ImageDescription -Caption-Abstract FILE
   ```
-* Write:
+* Write (date):
 
   ```bash
-  exiftool -overwrite_original -DateTimeOriginal="..." FILE
+  exiftool -overwrite_original -EXIF:DateTimeOriginal="..." FILE
+  ```
+* Write (description — new):
+
+  ```bash
+  exiftool -overwrite_original \
+    -Description="..." \
+    -ImageDescription="..." \
+    -Caption-Abstract="..." FILE
   ```
 
 ---
@@ -172,20 +190,20 @@ User can:
 
 **Goal:** Eliminate repetitive metadata operations
 
-#### Additional Fields
+#### Additional Read-Only Fields (Implemented)
 
-* CreateDate
-* ModifyDate
-* Description
+* CreateDate — displayed in preview panel
+* ModifyDate — displayed in preview panel
+* ImageDescription — displayed in preview panel (synced from Description on write)
+* Caption-Abstract — displayed in preview panel (synced from Description on write)
 
-#### Features
+#### Planned Features
 
 * Smart actions:
 
-  * Sync all date fields
+  * Sync all date fields (DateTimeOriginal → CreateDate → ModifyDate)
   * Copy CreateDate → DateTimeOriginal
   * Clear OffsetTime fields
-* Description writing across EXIF/IPTC/XMP
 * Column sorting in file table
 
 #### Example Write Logic
@@ -251,8 +269,8 @@ exiftool -r -overwrite_original \
 ### 1. Minimal UI
 
 * No clutter
-* No unnecessary metadata fields
-* No overwhelming panels
+* Focused on essential editable fields (date + description)
+* Read-only fields shown for reference only
 
 ---
 
@@ -279,6 +297,12 @@ All metadata logic is delegated to ExifTool.
 ExifShell is:
 
 > A visual control layer, not a metadata engine
+
+---
+
+### 5. Description Master Field
+
+The Description field acts as a single source of truth. On save, its value is written to all three description-related tags (Description, ImageDescription, Caption-Abstract). This ensures consistency across EXIF/IPTC/XMP without manual syncing.
 
 ---
 

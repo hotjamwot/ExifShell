@@ -14,6 +14,7 @@ class FileListViewModel {
     var isLoading = false
     var statusMessage: String?
     var lastSaveFeedback: SaveFeedback?
+    var lastDescriptionSaveFeedback: SaveFeedback?
 
     /// The bulk-edit value being typed (shown in the toolbar when multiple files are selected).
     var bulkEditValue: String = ""
@@ -43,12 +44,20 @@ class FileListViewModel {
         isLoading = true
         statusMessage = nil
 
-        // Batch-read all new files in a single ExifTool invocation (much faster)
-        let metadata = ExifToolService.readDateTimeOriginal(from: newURLs)
+        // Batch-read all metadata in a single ExifTool invocation (much faster)
+        let metadata = ExifToolService.readAllMetadata(from: newURLs)
 
         let newFiles = newURLs.map { url in
-            let dto = metadata[url] ?? nil
-            return ImageFile(url: url, dateTimeOriginal: dto ?? "")
+            let m = metadata[url]
+            return ImageFile(
+                url: url,
+                dateTimeOriginal: m?.dateTimeOriginal ?? "",
+                description: m?.description ?? "",
+                createDate: m?.createDate,
+                modifyDate: m?.modifyDate,
+                imageDescription: m?.imageDescription,
+                captionAbstract: m?.captionAbstract
+            )
         }
 
         files.append(contentsOf: newFiles)
@@ -77,6 +86,7 @@ class FileListViewModel {
         selectedFile = nil
         selectedFiles = []
         lastSaveFeedback = nil
+        lastDescriptionSaveFeedback = nil
         statusMessage = nil
         bulkEditValue = ""
     }
@@ -90,6 +100,7 @@ class FileListViewModel {
     /// Clears transient save feedback when navigating away or re-selecting.
     private func clearFeedback() {
         lastSaveFeedback = nil
+        lastDescriptionSaveFeedback = nil
         statusMessage = nil
     }
 
@@ -113,12 +124,31 @@ class FileListViewModel {
         statusMessage = "Applied to \(targets.count) file(s)."
     }
 
+    /// Applies the current `bulkEditValue` to descriptions of all currently selected files.
+    func applyBulkEditDescription() {
+        let value = bulkEditValue.trimmingCharacters(in: .whitespaces)
+        guard !value.isEmpty else {
+            statusMessage = "Enter a description value before applying."
+            return
+        }
+        let targets = selectedFiles.filter { $0.description != value }
+        guard !targets.isEmpty else {
+            statusMessage = "All selected files already have this description."
+            return
+        }
+        for file in targets {
+            file.description = value
+        }
+        statusMessage = "Applied description to \(targets.count) file(s)."
+    }
+
     // MARK: - Save
 
     /// The number of files with unsaved changes.
     var dirtyCount: Int { files.filter(\.isDirty).count }
 
-    /// Saves all dirty files in a single batch per unique value.
+    /// Saves all dirty files in batch — groups by distinct field values
+    /// so that files with the same edits are written together.
     func saveAll() {
         let dirtyFiles = files.filter(\.isDirty)
         guard !dirtyFiles.isEmpty else {
@@ -126,33 +156,77 @@ class FileListViewModel {
             return
         }
 
-        let grouped = Dictionary(grouping: dirtyFiles) { $0.dateTimeOriginal }
+        // Determine which files changed which field
+        let dateChangedFiles = dirtyFiles.filter { $0.dateTimeOriginal != $0.originalDateTimeOriginal }
+        let descChangedFiles = dirtyFiles.filter { $0.description != $0.originalDescription }
+
         var totalSuccess = 0
         var totalFail = 0
         var lastError = ""
-        var lastFeedback: SaveFeedback?
+        var dateFeedback: SaveFeedback?
+        var descFeedback: SaveFeedback?
 
-        for (value, group) in grouped {
-            let urls = group.map(\.url)
-            let result = ExifToolService.writeDateTimeOriginal(value, to: urls)
-            if result.success {
-                for file in group {
-                    let feedback = SaveFeedback(
-                        filename: file.filename,
-                        from: file.originalDateTimeOriginal.isEmpty ? "(empty)" : file.originalDateTimeOriginal,
-                        to: file.dateTimeOriginal
-                    )
-                    file.markClean()
-                    lastFeedback = feedback
+        // Track which files were successfully saved (by field)
+        var dateSaved = Set<ImageFile.ID>()
+        var descSaved = Set<ImageFile.ID>()
+
+        // Save DateTimeOriginal changes grouped by value
+        if !dateChangedFiles.isEmpty {
+            let grouped = Dictionary(grouping: dateChangedFiles) { $0.dateTimeOriginal }
+            for (value, group) in grouped {
+                let urls = group.map(\.url)
+                let result = ExifToolService.writeDateTimeOriginal(value, to: urls)
+                if result.success {
+                    for file in group {
+                        dateSaved.insert(file.id)
+                        dateFeedback = SaveFeedback(
+                            filename: file.filename,
+                            from: file.originalDateTimeOriginal.isEmpty ? "(empty)" : file.originalDateTimeOriginal,
+                            to: file.dateTimeOriginal
+                        )
+                    }
+                    totalSuccess += group.count
+                } else {
+                    totalFail += group.count
+                    lastError = result.output
                 }
-                totalSuccess += group.count
-            } else {
-                totalFail += group.count
-                lastError = result.output
             }
         }
 
-        if let feedback = lastFeedback { lastSaveFeedback = feedback }
+        // Save Description changes grouped by value
+        if !descChangedFiles.isEmpty {
+            let grouped = Dictionary(grouping: descChangedFiles) { $0.description }
+            for (value, group) in grouped {
+                let urls = group.map(\.url)
+                let result = ExifToolService.writeDescription(value, to: urls)
+                if result.success {
+                    for file in group {
+                        descSaved.insert(file.id)
+                        descFeedback = SaveFeedback(
+                            filename: file.filename,
+                            from: file.originalDescription.isEmpty ? "(empty)" : file.originalDescription,
+                            to: file.description
+                        )
+                    }
+                    totalSuccess += group.count
+                } else {
+                    totalFail += group.count
+                    lastError = result.output
+                }
+            }
+        }
+
+        // Mark files clean only after ALL writes succeed for each field
+        for file in dirtyFiles {
+            let dateOK = !dateChangedFiles.contains(where: { $0.id == file.id }) || dateSaved.contains(file.id)
+            let descOK = !descChangedFiles.contains(where: { $0.id == file.id }) || descSaved.contains(file.id)
+            if dateOK && descOK {
+                file.markClean()
+            }
+        }
+
+        if let feedback = dateFeedback { lastSaveFeedback = feedback }
+        if let feedback = descFeedback { lastDescriptionSaveFeedback = feedback }
 
         if totalFail == 0 {
             statusMessage = "✅ Saved \(totalSuccess) file(s)."

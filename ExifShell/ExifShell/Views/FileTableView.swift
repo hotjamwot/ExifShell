@@ -11,6 +11,7 @@ struct FileTableView: View {
                 TableRowView(
                     filename: file.filename,
                     dateTimeOriginal: $bindableFile.dateTimeOriginal,
+                    description: $bindableFile.description,
                     isDirty: file.isDirty
                 )
                 .id(file.id)
@@ -35,6 +36,7 @@ struct FileTableView: View {
 private struct TableRowView: View {
     let filename: String
     @Binding var dateTimeOriginal: String
+    @Binding var description: String
     let isDirty: Bool
 
     var body: some View {
@@ -42,7 +44,7 @@ private struct TableRowView: View {
             Text(filename)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(minWidth: 120, alignment: .leading)
+                .frame(minWidth: 100, alignment: .leading)
 
             Divider()
 
@@ -50,7 +52,17 @@ private struct TableRowView: View {
                 .textFieldStyle(.plain)
                 .font(.system(.body, design: .monospaced))
                 .foregroundColor(isDirty ? .orange : .primary)
-                .frame(minWidth: 180)
+                .frame(minWidth: 160)
+                .help("DateTimeOriginal (EXIF tag)")
+
+            Divider()
+
+            TextField("Description", text: $description)
+                .textFieldStyle(.plain)
+                .font(.system(.body, design: .monospaced))
+                .foregroundColor(isDirty ? .orange : .primary)
+                .frame(minWidth: 160)
+                .help("Description — written to Description, ImageDescription & Caption-Abstract on save")
         }
         .padding(.vertical, 2)
     }

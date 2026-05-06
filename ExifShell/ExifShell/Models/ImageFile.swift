@@ -8,6 +8,8 @@ final class ImageFile: Identifiable, Hashable {
     let url: URL
     let filename: String
 
+    // MARK: - DateTimeOriginal (editable)
+
     /// The last-saved DateTimeOriginal value.
     private(set) var originalDateTimeOriginal: String
 
@@ -20,22 +22,62 @@ final class ImageFile: Identifiable, Hashable {
         }
     }
 
+    // MARK: - Description (editable, master field)
+
+    /// The last-saved description value.
+    private(set) var originalDescription: String
+
+    /// The current (possibly edited) description value.
+    /// When edited, this is the master value that will be written to all
+    /// description-related EXIF tags (ImageDescription, Caption-Abstract, Description).
+    var description: String {
+        didSet {
+            if description != originalDescription {
+                isDirty = true
+            }
+        }
+    }
+
+    // MARK: - Read-Only Display Fields
+
+    let createDate: String?
+    let modifyDate: String?
+    let imageDescription: String?
+    let captionAbstract: String?
+
+    // MARK: - Dirty State
+
     /// Whether the file has unsaved changes.
     private(set) var isDirty: Bool = false
 
     let thumbnail: NSImage?
 
-    init(url: URL, dateTimeOriginal: String = "") {
+    init(
+        url: URL,
+        dateTimeOriginal: String = "",
+        description: String = "",
+        createDate: String? = nil,
+        modifyDate: String? = nil,
+        imageDescription: String? = nil,
+        captionAbstract: String? = nil
+    ) {
         self.url = url
         self.filename = url.lastPathComponent
         self.originalDateTimeOriginal = dateTimeOriginal
         self.dateTimeOriginal = dateTimeOriginal
+        self.originalDescription = description
+        self.description = description
+        self.createDate = createDate
+        self.modifyDate = modifyDate
+        self.imageDescription = imageDescription
+        self.captionAbstract = captionAbstract
         self.thumbnail = NSImage(contentsOf: url)
     }
 
     /// Marks the file as clean after a successful write.
     func markClean() {
         originalDateTimeOriginal = dateTimeOriginal
+        originalDescription = description
         isDirty = false
     }
 

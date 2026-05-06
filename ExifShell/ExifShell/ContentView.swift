@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @State private var viewModel = FileListViewModel()
     @State private var isTargeted = false
+    @State private var bulkEditDescriptionValue: String = ""
 
     var body: some View {
         ZStack {
@@ -18,10 +19,12 @@ struct ContentView: View {
                         // Bulk edit bar — visible when multiple files are selected
                         if viewModel.selectedFiles.count > 1 {
                             bulkEditBar
+                            Divider()
+                            bulkEditDescriptionBar
                         }
 
                         FileTableView(viewModel: viewModel)
-                            .frame(minWidth: 320)
+                            .frame(minWidth: 420)
 
                         // Status bar
                         if let status = viewModel.statusMessage {
@@ -43,9 +46,9 @@ struct ContentView: View {
                     }
 
                     PreviewPanel(viewModel: viewModel)
-                        .frame(minWidth: 280)
+                        .frame(minWidth: 300)
                 }
-                .frame(minWidth: 600, minHeight: 400)
+                .frame(minWidth: 720, minHeight: 400)
 
                 // Drag target overlay — visible even when files loaded
                 if isTargeted {
@@ -78,12 +81,12 @@ struct ContentView: View {
         )
     }
 
-    // MARK: - Bulk Edit Bar
+    // MARK: - Bulk Edit Bar (DateTimeOriginal)
 
     @ViewBuilder
     private var bulkEditBar: some View {
         HStack(spacing: 8) {
-            Image(systemName: "pencil")
+            Image(systemName: "calendar")
                 .foregroundColor(.secondary)
                 .font(.caption)
 
@@ -108,6 +111,42 @@ struct ContentView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .background(Color.accentColor.opacity(0.06))
+    }
+
+    // MARK: - Bulk Edit Bar (Description)
+
+    @ViewBuilder
+    private var bulkEditDescriptionBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "pencil")
+                .foregroundColor(.secondary)
+                .font(.caption)
+
+            Text("Set Description for \(viewModel.selectedFiles.count) selected file(s):")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            TextField("Description text...", text: $bulkEditDescriptionValue)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.caption, design: .monospaced))
+                .frame(minWidth: 250)
+                .onSubmit {
+                    viewModel.bulkEditValue = bulkEditDescriptionValue
+                    viewModel.applyBulkEditDescription()
+                }
+
+            Button("Apply") {
+                viewModel.bulkEditValue = bulkEditDescriptionValue
+                viewModel.applyBulkEditDescription()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            Spacer()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color.green.opacity(0.06))
     }
 
     // MARK: - Drop Handling

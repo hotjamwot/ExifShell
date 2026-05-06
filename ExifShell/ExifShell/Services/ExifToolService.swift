@@ -132,6 +132,98 @@ enum ExifToolService {
         }
     }
 
+    // MARK: - Full Metadata Read (Batch)
+
+    /// A bundle of all metadata fields we care about for a single file.
+    struct FileMetadata {
+        let dateTimeOriginal: String?
+        let createDate: String?
+        let modifyDate: String?
+        let description: String?
+        let imageDescription: String?
+        let captionAbstract: String?
+    }
+
+    /// Reads all supported metadata fields from multiple files in a **single** ExifTool invocation.
+    ///
+    /// - Parameter urls: The file URLs to read from.
+    /// - Returns: A dictionary mapping each URL to its FileMetadata.
+    static func readAllMetadata(from urls: [URL]) -> [URL: FileMetadata] {
+        guard !urls.isEmpty else { return [:] }
+
+        if missingToolError != nil {
+            return Dictionary(uniqueKeysWithValues: urls.map { ($0, FileMetadata(
+                dateTimeOriginal: nil, createDate: nil, modifyDate: nil,
+                description: nil, imageDescription: nil, captionAbstract: nil
+            )) })
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: exifToolPath)
+        process.arguments = [
+            "-json",
+            "-DateTimeOriginal",
+            "-CreateDate",
+            "-ModifyDate",
+            "-Description",
+            "-ImageDescription",
+            "-Caption-Abstract"
+        ] + urls.map(\.path)
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            guard process.terminationStatus == 0 else {
+                return Dictionary(uniqueKeysWithValues: urls.map { ($0, FileMetadata(
+                    dateTimeOriginal: nil, createDate: nil, modifyDate: nil,
+                    description: nil, imageDescription: nil, captionAbstract: nil
+                )) })
+            }
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard !data.isEmpty else {
+                return Dictionary(uniqueKeysWithValues: urls.map { ($0, FileMetadata(
+                    dateTimeOriginal: nil, createDate: nil, modifyDate: nil,
+                    description: nil, imageDescription: nil, captionAbstract: nil
+                )) })
+            }
+
+            let json = try decoder.decode([FullExifToolOutput].self, from: data)
+
+            var results: [URL: FileMetadata] = [:]
+            for entry in json {
+                let url = URL(fileURLWithPath: entry.sourceFile)
+                results[url] = FileMetadata(
+                    dateTimeOriginal: entry.dateTimeOriginal,
+                    createDate: entry.createDate,
+                    modifyDate: entry.modifyDate,
+                    description: entry.description,
+                    imageDescription: entry.imageDescription,
+                    captionAbstract: entry.captionAbstract
+                )
+            }
+            for url in urls {
+                if !results.keys.contains(url) {
+                    results[url] = FileMetadata(
+                        dateTimeOriginal: nil, createDate: nil, modifyDate: nil,
+                        description: nil, imageDescription: nil, captionAbstract: nil
+                    )
+                }
+            }
+            return results
+        } catch {
+            return Dictionary(uniqueKeysWithValues: urls.map { ($0, FileMetadata(
+                dateTimeOriginal: nil, createDate: nil, modifyDate: nil,
+                description: nil, imageDescription: nil, captionAbstract: nil
+            )) })
+        }
+    }
+
     // MARK: - Write (Batch)
 
     /// Result of a write operation.
@@ -200,6 +292,59 @@ enum ExifToolService {
             return WriteResult(success: false, output: error.localizedDescription)
         }
     }
+
+    /// Writes a description value to all description-related EXIF tags
+    /// (Description, ImageDescription, Caption-Abstract) in a single ExifTool call.
+    ///
+    /// - Parameters:
+    ///   - value: The description string to write.
+    ///   - urls: The file URLs to apply the change to.
+    /// - Returns: A WriteResult with success status and captured output/error.
+    static func writeDescription(_ value: String, to urls: [URL]) -> WriteResult {
+        guard !urls.isEmpty else {
+            return WriteResult(success: false, output: "No files provided.")
+        }
+
+        if let error = missingToolError {
+            return WriteResult(success: false, output: error)
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: exifToolPath)
+
+        var args: [String] = [
+            "-overwrite_original",
+            "-Description=\(value)",
+            "-ImageDescription=\(value)",
+            "-Caption-Abstract=\(value)"
+        ]
+        args.append(contentsOf: urls.map(\.path))
+        process.arguments = args
+
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        process.standardOutput = outPipe
+        process.standardError = errPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: outData, encoding: .utf8) ?? ""
+            let errorOutput = String(data: errData, encoding: .utf8) ?? ""
+            let combined = [output, errorOutput]
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            let success = process.terminationStatus == 0
+            return WriteResult(success: success, output: success ? output : combined)
+        } catch {
+            return WriteResult(success: false, output: error.localizedDescription)
+        }
+    }
 }
 
 // MARK: - JSON Decoding
@@ -211,5 +356,25 @@ private struct ExifToolOutput: Decodable {
     enum CodingKeys: String, CodingKey {
         case sourceFile = "SourceFile"
         case dateTimeOriginal = "DateTimeOriginal"
+    }
+}
+
+private struct FullExifToolOutput: Decodable {
+    let sourceFile: String
+    let dateTimeOriginal: String?
+    let createDate: String?
+    let modifyDate: String?
+    let description: String?
+    let imageDescription: String?
+    let captionAbstract: String?
+
+    enum CodingKeys: String, CodingKey {
+        case sourceFile = "SourceFile"
+        case dateTimeOriginal = "DateTimeOriginal"
+        case createDate = "CreateDate"
+        case modifyDate = "ModifyDate"
+        case description = "Description"
+        case imageDescription = "ImageDescription"
+        case captionAbstract = "Caption-Abstract"
     }
 }

@@ -19,9 +19,9 @@ struct ExifShellApp: App {
                     DispatchQueue.main.async {
                         NSApplication.shared.activate(ignoringOtherApps: true)
                     }
-                    // Set a reasonable default window size
+                    // Set a generous default window size for metadata preview
                     if let window = NSApplication.shared.windows.first {
-                        window.setContentSize(NSSize(width: 800, height: 500))
+                        window.setContentSize(NSSize(width: 1100, height: 680))
                     }
                 }
         }
