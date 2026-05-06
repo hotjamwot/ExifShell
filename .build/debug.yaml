@@ -1,0 +1,81 @@
+client:
+  name: basic
+  file-system: device-agnostic
+tools: {}
+targets:
+  "ExifShell-arm64-apple-macosx15.0-debug.exe": ["<ExifShell-arm64-apple-macosx15.0-debug.exe>"]
+  "ExifShell-arm64-apple-macosx15.0-debug.module": ["<ExifShell-arm64-apple-macosx15.0-debug.module>"]
+  "PackageStructure": ["<PackageStructure>"]
+  "main": ["<ExifShell-arm64-apple-macosx15.0-debug.exe>","<ExifShell-arm64-apple-macosx15.0-debug.module>"]
+  "test": ["<ExifShell-arm64-apple-macosx15.0-debug.exe>","<ExifShell-arm64-apple-macosx15.0-debug.module>"]
+default: "main"
+nodes:
+  "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/":
+    is-directory-structure: true
+    content-exclusion-patterns: [".git",".build"]
+  "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell":
+    is-mutated: true
+commands:
+  "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell-entitlement.plist":
+    tool: write-auxiliary-file
+    inputs: ["<entitlement-plist>","<com.apple.security.get-task-allow>"]
+    outputs: ["/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell-entitlement.plist"]
+    description: "Write auxiliary file /Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell-entitlement.plist"
+
+  "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/sources":
+    tool: write-auxiliary-file
+    inputs: ["<sources-file-list>","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/ContentView.swift","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/ExifShellApp.swift","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Models/ImageFile.swift","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Services/ExifToolService.swift","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/ViewModels/FileListViewModel.swift","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Views/DropZoneView.swift","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Views/FileTableView.swift","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Views/PreviewPanel.swift"]
+    outputs: ["/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/sources"]
+    description: "Write auxiliary file /Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/sources"
+
+  "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.product/Objects.LinkFileList":
+    tool: write-auxiliary-file
+    inputs: ["<link-file-list>","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ContentView.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/DropZoneView.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ExifShellApp.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ExifToolService.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/FileListViewModel.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/FileTableView.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ImageFile.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/PreviewPanel.swift.o"]
+    outputs: ["/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.product/Objects.LinkFileList"]
+    description: "Write auxiliary file /Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.product/Objects.LinkFileList"
+
+  "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt":
+    tool: write-auxiliary-file
+    inputs: ["<swift-get-version>","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"]
+    outputs: ["/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"]
+    always-out-of-date: "true"
+    description: "Write auxiliary file /Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+
+  "<ExifShell-arm64-apple-macosx15.0-debug.exe>":
+    tool: phony
+    inputs: ["<ExifShell-arm64-apple-macosx15.0-debug.exe-CodeSigning>"]
+    outputs: ["<ExifShell-arm64-apple-macosx15.0-debug.exe>"]
+
+  "<ExifShell-arm64-apple-macosx15.0-debug.module>":
+    tool: phony
+    inputs: ["/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ContentView.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ExifShellApp.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ImageFile.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ExifToolService.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/FileListViewModel.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/DropZoneView.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/FileTableView.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/PreviewPanel.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/Modules/ExifShell.swiftmodule"]
+    outputs: ["<ExifShell-arm64-apple-macosx15.0-debug.module>"]
+
+  "C.ExifShell-arm64-apple-macosx15.0-debug.exe":
+    tool: shell
+    inputs: ["/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ContentView.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/DropZoneView.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ExifShellApp.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ExifToolService.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/FileListViewModel.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/FileTableView.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ImageFile.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/PreviewPanel.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.product/Objects.LinkFileList"]
+    outputs: ["/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell"]
+    description: "Linking ./.build/arm64-apple-macosx/debug/ExifShell"
+    args: ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc","-L","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug","-o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell","-module-name","ExifShell","-Xlinker","-no_warn_duplicate_libraries","-emit-executable","-Xlinker","-alias","-Xlinker","_ExifShell_main","-Xlinker","_main","-Xlinker","-rpath","-Xlinker","@loader_path","@/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.product/Objects.LinkFileList","-Xlinker","-rpath","-Xlinker","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-6.2/macosx","-target","arm64-apple-macosx14.0","-Xlinker","-add_ast_path","-Xlinker","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/Modules/ExifShell.swiftmodule","-plugin-path","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing","-sdk","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks","-I","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-L","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-g"]
+
+  "C.ExifShell-arm64-apple-macosx15.0-debug.exe-entitlements":
+    tool: shell
+    inputs: ["/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell-entitlement.plist"]
+    outputs: ["<ExifShell-arm64-apple-macosx15.0-debug.exe-CodeSigning>"]
+    description: "Applying debug entitlements to ./.build/arm64-apple-macosx/debug/ExifShell"
+    args: ["codesign","--force","--sign","-","--entitlements","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell-entitlement.plist","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell"]
+
+  "C.ExifShell-arm64-apple-macosx15.0-debug.module":
+    tool: shell
+    inputs: ["/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/ContentView.swift","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/ExifShellApp.swift","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Models/ImageFile.swift","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Services/ExifToolService.swift","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/ViewModels/FileListViewModel.swift","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Views/DropZoneView.swift","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Views/FileTableView.swift","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Views/PreviewPanel.swift","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/sources"]
+    outputs: ["/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ContentView.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ExifShellApp.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ImageFile.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ExifToolService.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/FileListViewModel.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/DropZoneView.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/FileTableView.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/PreviewPanel.swift.o","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/Modules/ExifShell.swiftmodule"]
+    description: "Compiling Swift Module 'ExifShell' (8 sources)"
+    args: ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc","-module-name","ExifShell","-emit-dependencies","-emit-module","-emit-module-path","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/Modules/ExifShell.swiftmodule","-output-file-map","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/output-file-map.json","-incremental","-c","@/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/sources","-I","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/Modules","-target","arm64-apple-macosx14.0","-incremental","-enable-batch-mode","-serialize-diagnostics","-index-store-path","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/index/store","-Onone","-enable-testing","-j10","-DSWIFT_PACKAGE","-DDEBUG","-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE","-module-cache-path","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ModuleCache","-parseable-output","-Xfrontend","-entry-point-function-name","-Xfrontend","ExifShell_main","-color-diagnostics","-swift-version","5","-plugin-path","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing","-sdk","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks","-I","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-L","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-g","-Xcc","-isysroot","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk","-Xcc","-F","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-Xcc","-F","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks","-Xcc","-fPIC","-Xcc","-g","-package-name","exifshell"]
+
+  "PackageStructure":
+    tool: package-structure-tool
+    inputs: ["/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Package.swift","/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Package.resolved"]
+    outputs: ["<PackageStructure>"]
+    description: "Planning build"
+    allow-missing-inputs: true
+

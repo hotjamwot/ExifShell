@@ -1,0 +1,102 @@
+# ExifShell
+
+A minimal, high-speed macOS application for inspecting and editing image metadata using **ExifTool** as its backend.
+
+## Philosophy
+
+- **Speed over completeness**
+- **Clarity over flexibility**
+- **Batch power, single-file precision**
+- **WYSIWYG editing** — no mental translation from terminal syntax
+
+## Minimal Viable Feature Set
+
+- Drag & drop images or folders
+- View `DateTimeOriginal` metadata in a sortable table
+- Click to edit `DateTimeOriginal` inline
+- Files are **marked dirty** on edit — no accidental writes
+- **Apply to Selected** — saves only the currently selected file
+- **Apply to All** — saves all dirty files in a single batch per unique value
+- Thumbnail preview of selected image
+- Keyboard shortcuts: `⌘S` (apply selected), `⇧⌘S` (apply all)
+
+## How to Run
+
+### From Terminal
+
+```bash
+# Clone or cd into the project directory, then:
+swift run
+```
+
+The app window will appear. This compiles and launches in one step.
+
+### From Xcode
+
+```bash
+# Generate Xcode project
+swift package generate-xcodeproj
+
+# Then open and run
+open ExifShell.xcodeproj
+```
+
+Or simply open the `Package.swift` file directly in Xcode and press ▶︎.
+
+## Requirements
+
+- **macOS 14+** (Sonoma)
+- **ExifTool** installed and available on `$PATH`:
+  ```bash
+  brew install exiftool
+  ```
+
+## Usage Flow
+
+```
+1. Launch app → Empty drop zone appears
+2. Drop images or folders → Files load with current DateTimeOriginal
+3. Click a file to preview → Thumbnail + editable field shown
+4. Edit the date in-place → File marked "• modified" (dirty)
+5. Press ⌘S → Save selected file
+   Press ⇧⌘S → Save all dirty files
+```
+
+### Dirty State
+
+ExifShell uses an intentional "edit → mark dirty → apply" pattern:
+
+- Editing a file's date marks it as **dirty** (orange "• modified" indicator).
+- Nothing is written to disk until you explicitly apply.
+- Apply buttons show the dirty count (e.g. "Apply to All (3 dirty)").
+- Buttons are **disabled** when there's nothing to save.
+- On successful write, the file is marked clean and the original baseline resets.
+
+This prevents accidental overwrites and enables efficient batch writes
+by grouping files with identical date values into a single ExifTool process call.
+
+## Architecture
+
+See [Documentation/ARCHITECTURE.md](Documentation/ARCHITECTURE.md) for full details.
+
+## Project Structure
+
+```
+Sources/
+├── ExifShellApp.swift          # App entry point
+├── ContentView.swift           # Root view
+├── Models/ImageFile.swift      # Data model (with dirty state tracking)
+├── ViewModels/FileListViewModel.swift  # State, logic, batch apply
+├── Services/ExifToolService.swift      # ExifTool wrapper (batch writes)
+└── Views/
+    ├── DropZoneView.swift      # Drag-and-drop
+    ├── FileTableView.swift     # Metadata table
+    └── PreviewPanel.swift      # Thumbnail + edit + apply
+Documentation/
+├── ARCHITECTURE.md             # Architecture overview
+└── AI_CONTEXT.md               # AI-friendly edit context
+```
+
+## License
+
+MIT

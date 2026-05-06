@@ -1,0 +1,398 @@
+{
+  "builtTestProducts" : [
+
+  ],
+  "copyCommands" : {
+
+  },
+  "explicitTargetDependencyImportCheckingMode" : {
+    "none" : {
+
+    }
+  },
+  "generatedSourceTargetSet" : [
+
+  ],
+  "pluginDescriptions" : [
+
+  ],
+  "swiftCommands" : {
+    "C.ExifShell-arm64-apple-macosx15.0-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/sources",
+      "importPath" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/ContentView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/ExifShellApp.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Models/ImageFile.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Services/ExifToolService.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/ViewModels/FileListViewModel.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Views/DropZoneView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Views/FileTableView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Views/PreviewPanel.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/sources"
+        }
+      ],
+      "isLibrary" : false,
+      "moduleName" : "ExifShell",
+      "moduleOutputPath" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/Modules/ExifShell.swiftmodule",
+      "objects" : [
+        "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ContentView.swift.o",
+        "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ExifShellApp.swift.o",
+        "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ImageFile.swift.o",
+        "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ExifToolService.swift.o",
+        "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/FileListViewModel.swift.o",
+        "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/DropZoneView.swift.o",
+        "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/FileTableView.swift.o",
+        "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/PreviewPanel.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx14.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-j10",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-Xfrontend",
+        "-entry-point-function-name",
+        "-Xfrontend",
+        "ExifShell_main",
+        "-color-diagnostics",
+        "-swift-version",
+        "5",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "exifshell"
+      ],
+      "outputFileMapPath" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ContentView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ExifShellApp.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ImageFile.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ExifToolService.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/FileListViewModel.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/DropZoneView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/FileTableView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/PreviewPanel.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/Modules/ExifShell.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/ContentView.swift",
+        "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/ExifShellApp.swift",
+        "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Models/ImageFile.swift",
+        "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Services/ExifToolService.swift",
+        "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/ViewModels/FileListViewModel.swift",
+        "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Views/DropZoneView.swift",
+        "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Views/FileTableView.swift",
+        "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Views/PreviewPanel.swift"
+      ],
+      "tempsPath" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build",
+      "wholeModuleOptimization" : false
+    }
+  },
+  "swiftFrontendCommands" : {
+
+  },
+  "swiftTargetScanArgs" : {
+    "ExifShell" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "ExifShell",
+      "-package-name",
+      "exifshell",
+      "-c",
+      "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/ContentView.swift",
+      "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/ExifShellApp.swift",
+      "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Models/ImageFile.swift",
+      "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Services/ExifToolService.swift",
+      "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/ViewModels/FileListViewModel.swift",
+      "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Views/DropZoneView.swift",
+      "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Views/FileTableView.swift",
+      "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Views/PreviewPanel.swift",
+      "-I",
+      "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx14.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-j10",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-Xfrontend",
+      "-entry-point-function-name",
+      "-Xfrontend",
+      "ExifShell_main",
+      "-color-diagnostics",
+      "-swift-version",
+      "5",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "exifshell",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ]
+  },
+  "targetDependencyMap" : {
+    "ExifShell" : [
+
+    ]
+  },
+  "testDiscoveryCommands" : {
+
+  },
+  "testEntryPointCommands" : {
+
+  },
+  "traitConfiguration" : {
+    "default" : {
+
+    }
+  },
+  "writeCommands" : {
+    "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell-entitlement.plist" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<entitlement-plist>"
+        },
+        {
+          "kind" : "virtual",
+          "name" : "<com.apple.security.get-task-allow>"
+        }
+      ],
+      "outputFilePath" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell-entitlement.plist"
+    },
+    "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/ContentView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/ExifShellApp.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Models/ImageFile.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Services/ExifToolService.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/ViewModels/FileListViewModel.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Views/DropZoneView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Views/FileTableView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/Sources/Views/PreviewPanel.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/sources"
+    },
+    "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.product/Objects.LinkFileList" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<link-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ContentView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/DropZoneView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ExifShellApp.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ExifToolService.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/FileListViewModel.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/FileTableView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/ImageFile.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.build/PreviewPanel.swift.o"
+        }
+      ],
+      "outputFilePath" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/ExifShell.product/Objects.LinkFileList"
+    },
+    "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt" : {
+      "alwaysOutOfDate" : true,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<swift-get-version>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+        }
+      ],
+      "outputFilePath" : "/Users/haydenjweal/Movies/PROJECTS/Code/ExifShell/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+    }
+  }
+}
