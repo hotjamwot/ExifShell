@@ -27,16 +27,31 @@ struct ContentView: View {
                             .frame(minWidth: 420)
 
                         // Status bar
-                        if let status = viewModel.statusMessage {
-                            HStack {
-                                Text(status)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+                        if viewModel.statusMessage != nil || viewModel.operationMessage != nil || viewModel.isLoading || viewModel.isSaving || viewModel.isSanitising || viewModel.isRenaming {
+                            HStack(spacing: 8) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    if let message = viewModel.operationMessage {
+                                        Text(message)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    if let status = viewModel.statusMessage {
+                                        Text(status)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
                                 Spacer()
-                                if viewModel.isLoading {
+                                if let progress = viewModel.operationProgress {
+                                    ProgressView(value: progress, total: 1.0)
+                                        .scaleEffect(0.7)
+                                        .controlSize(.small)
+                                        .frame(width: 120)
+                                } else {
                                     ProgressView()
                                         .scaleEffect(0.7)
                                         .controlSize(.small)
+                                        .frame(width: 120)
                                 }
                             }
                             .padding(.horizontal, 8)
@@ -59,6 +74,26 @@ struct ContentView: View {
                                 .foregroundColor(.accentColor)
                         )
                 }
+            }
+
+            if viewModel.isLoading {
+                Color.black.opacity(0.12)
+                    .ignoresSafeArea()
+                VStack(spacing: 12) {
+                    ProgressView(viewModel.operationMessage ?? "Loading…")
+                        .progressViewStyle(.circular)
+                        .scaleEffect(1.2)
+                        .padding(.bottom, 4)
+                    if let progress = viewModel.operationProgress {
+                        ProgressView(value: progress)
+                            .progressViewStyle(.linear)
+                            .frame(width: 240)
+                    }
+                }
+                .padding(20)
+                .background(.ultraThinMaterial)
+                .cornerRadius(14)
+                .shadow(radius: 12)
             }
         }
         .onDrop(

@@ -93,11 +93,13 @@ With zero need to think about:
   * Filename
   * DateTimeOriginal (editable)
   * Description (editable)
+  * Sortable columns with clickable headers
 * Selecting a file shows:
 
   * Thumbnail preview
   * Editable metadata fields (DateTimeOriginal + Description with diff)
-  * Read-only metadata (Create Date, Modify Date, ImageDescription, Caption-Abstract)
+  * Read-only metadata (Create Date, Modify Date, ImageDescription, Caption-Abstract, Subject)
+  * Selection summary when multiple files are highlighted
 
 ---
 
@@ -152,12 +154,15 @@ User can:
 * **Bulk edit** — set DateTimeOriginal on multiple selected files at once
 * **Bulk edit description** — set Description on multiple selected files at once
 * **Delete selected** — press ⌫ Delete/Backspace to remove files from the working list
-* Batch ExifTool reads — all metadata (6 tags) processed in a single command for speed
+* Batch metadata loads in chunks of 80 files:
+  * placeholder rows appear immediately
+  * determinate progress updates after each batch finishes
+  * more reliable for large imports like 385 files
 * Preview panel shows:
 
   * DateTimeOriginal diff (grey → green when dirty)
   * Description diff (grey → green when dirty)
-  * Read-only Create Date, Modify Date, ImageDescription, Caption-Abstract
+  * Read-only Create Date, Modify Date, ImageDescription, Caption-Abstract, Subject
 * Apply changes:
 
   * ⌘S (app-wide shortcut)
@@ -213,14 +218,14 @@ User can:
 * ModifyDate — displayed in preview panel
 * ImageDescription — displayed in preview panel (synced from Description on save)
 * Caption-Abstract — displayed in preview panel (synced from Description on save)
+* Subject — displayed in preview panel when present
+* CreateDate / ModifyDate copy actions now work across selected files, using each file's own source date
+* Sortable column headers in the file table
 * **Sanitise All button** — runs the full date propagation + offset clearing + description sync pipeline
 
 #### Still Planned
 
-* Smart actions:
-
-  * Copy CreateDate → DateTimeOriginal
-* Column sorting in file table
+* Advanced automation and heuristics for missing metadata
 
 ---
 

@@ -12,13 +12,15 @@ A minimal, high-speed macOS application for inspecting and editing image metadat
 ## Features
 
 - Drag & drop images or folders
-- View and edit `DateTimeOriginal` metadata in a sortable table
+- View and edit `DateTimeOriginal` metadata in a sortable table with clickable headers
 - View and edit `Description` metadata — written to Description, ImageDescription & Caption-Abstract on save
-- View read-only metadata: CreateDate, ModifyDate, ImageDescription, Caption-Abstract
+- View read-only metadata: CreateDate, ModifyDate, ImageDescription, Caption-Abstract, Subject
 - **Multi-select with ⌘+click** — edit or remove multiple files at once
 - **Bulk edit bar** — when 2+ files are selected, toolbars appear to set DateTimeOriginal or Description on all of them
+- **Bulk copy CreateDate / ModifyDate** — copy each selected file's own source date into its own DateTimeOriginal
 - **Bulk offset edit** — apply a relative `+` / `-` offset in Hours, Days, or Months to selected DateTimeOriginal values
 - Files are **marked dirty** on edit — orange text in the table signals unsaved changes
+- Files are appended immediately on import and metadata loads in batches of 80 with a determinate progress indicator
 - **Diff review** — preview panel shows grey (current) → green (proposed) before you save
 - **Single Save button** — saves all dirty files in efficient batch writes per unique value for each field
 - **Sanitise All** — normalises DateTimeOriginal format, propagates it to CreateDate/ModifyDate, clears offset fields, and copies Description to ImageDescription/Caption-Abstract
@@ -56,7 +58,7 @@ You can open `Package.swift` directly in Xcode and press ▶︎.
 
 ```
 1. Launch app → Empty drop zone appears
-2. Drop images or folders → Files load with current metadata (batch-loaded for speed)
+2. Drop images or folders → Files appear immediately while metadata loads in batches of 80 with determinate progress
 3. Click a file to preview → Thumbnail + editable fields + read-only metadata shown
 4. Edit the date or description in-place → File marked "• modified" (dirty)
 5. Select multiple files (⌘+click) → Bulk edit bars appear for mass updates including absolute DateTimeOriginal writes and relative offset adjustments
@@ -136,7 +138,7 @@ The app locates `exiftool` at startup by checking common install paths:
 4. `/opt/local/bin/exiftool` (MacPorts)
 5. Falls back to `which exiftool`
 
-This ensures it works from Terminal, Xcode, or a bundled `.app`.
+This ensures it works from Terminal, Xcode, or a bundled `.app` and surfaces a user-friendly status message when ExifTool is missing.
 
 ## Architecture
 

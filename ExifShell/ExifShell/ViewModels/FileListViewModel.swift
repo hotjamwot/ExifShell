@@ -7,12 +7,65 @@ import UniformTypeIdentifiers
 class FileListViewModel {
 
     var files: [ImageFile] = []
+
+    // MARK: - Sorting
+    enum SortKey {
+        case filename
+        case originalDateTime
+        case description
+    }
+
+    /// Current sort key (defaults to filename).
+    var sortKey: SortKey = .filename
+    /// Whether sort is ascending.
+    var sortAscending: Bool = true
+
+    /// Toggle sorting for a given key: if the same key is tapped, flip order; otherwise set to ascending.
+    func toggleSort(_ key: SortKey) {
+        if sortKey == key {
+            sortAscending.toggle()
+        } else {
+            sortKey = key
+            sortAscending = true
+        }
+    }
+
+    /// Returns the files array sorted according to `sortKey` and `sortAscending`.
+    var sortedFiles: [ImageFile] {
+        files.sorted { a, b in
+            let cmp: ComparisonResult
+            switch sortKey {
+            case .filename:
+                cmp = a.filename.localizedCaseInsensitiveCompare(b.filename)
+            case .description:
+                cmp = a.description.localizedCaseInsensitiveCompare(b.description)
+            case .originalDateTime:
+                let da = Self.exifDateFormatter.date(from: a.dateTimeOriginal)
+                let db = Self.exifDateFormatter.date(from: b.dateTimeOriginal)
+                if let da, let db {
+                    if da == db { cmp = .orderedSame }
+                    else { cmp = da < db ? .orderedAscending : .orderedDescending }
+                } else if let _ = da {
+                    cmp = .orderedAscending
+                } else if let _ = db {
+                    cmp = .orderedDescending
+                } else {
+                    cmp = a.filename.localizedCaseInsensitiveCompare(b.filename)
+                }
+            }
+
+            return sortAscending ? (cmp == .orderedAscending) : (cmp == .orderedDescending)
+        }
+    }
     var selectedFile: ImageFile? {
         didSet { clearFeedback() }
     }
     var selectedFiles: [ImageFile] = []
     var isLoading = false
     var statusMessage: String?
+    var operationMessage: String?
+    var operationProgress: Double?
+    var isSaving = false
     var lastSaveFeedback: SaveFeedback?
     var lastDescriptionSaveFeedback: SaveFeedback?
 
@@ -63,33 +116,85 @@ class FileListViewModel {
 
         let existingURLs = Set(files.map(\.url))
         let newURLs = imageURLs.filter { !existingURLs.contains($0) }
-        guard !newURLs.isEmpty else {
-            statusMessage = "All files already loaded."
+        let reloadURLs = Array(Set(imageURLs.filter { existingURLs.contains($0) }))
+        guard !newURLs.isEmpty || !reloadURLs.isEmpty else {
+            statusMessage = "No image files found in drop."
             return
         }
 
         isLoading = true
-        statusMessage = nil
+        let initialMessage = newURLs.isEmpty ? "Refreshing metadata for \(reloadURLs.count) file(s)..." : "Loading \(newURLs.count) file(s)..."
+        beginOperation(message: initialMessage, determinate: true)
 
-        // Batch-read all metadata in a single ExifTool invocation (much faster)
-        let metadata = ExifToolService.readAllMetadata(from: newURLs)
-
-        let newFiles = newURLs.map { url in
-            let m = metadata[url]
-            return ImageFile(
+        let placeholders = newURLs.map { url in
+            ImageFile(
                 url: url,
-                dateTimeOriginal: m?.dateTimeOriginal ?? "",
-                description: m?.description ?? "",
-                createDate: m?.createDate,
-                modifyDate: m?.modifyDate,
-                imageDescription: m?.imageDescription,
-                captionAbstract: m?.captionAbstract
+                dateTimeOriginal: "",
+                description: "",
+                createDate: nil,
+                modifyDate: nil,
+                imageDescription: nil,
+                captionAbstract: nil
             )
         }
+        files.append(contentsOf: placeholders)
 
-        files.append(contentsOf: newFiles)
-        isLoading = false
-        statusMessage = "Loaded \(newFiles.count) file(s)."
+        Task {
+            // If ExifTool is unavailable, surface a helpful status message so users
+            // understand why metadata fields may be empty.
+            if let err = ExifToolService.availabilityError() {
+                isLoading = false
+                endOperation(successMessage: nil)
+                statusMessage = err
+                for file in placeholders { file.markClean() }
+                return
+            }
+
+            let newMetadata = await loadMetadata(for: newURLs)
+            let reloadMetadata = await loadMetadata(for: reloadURLs)
+
+            for file in placeholders {
+                if let m = newMetadata[file.url] {
+                    file.dateTimeOriginal = m.dateTimeOriginal ?? ""
+                    file.description = m.description ?? ""
+                    file.createDate = m.createDate
+                    file.modifyDate = m.modifyDate
+                    file.imageDescription = m.imageDescription
+                    file.captionAbstract = m.captionAbstract
+                    file.subject = m.subject
+                    file.keywords = m.keywords
+                    file.lastKeywordXMP = m.lastKeywordXMP
+                }
+                file.markClean()
+            }
+
+            for file in files where reloadURLs.contains(file.url) {
+                if let m = reloadMetadata[file.url] {
+                    file.dateTimeOriginal = m.dateTimeOriginal ?? ""
+                    file.description = m.description ?? ""
+                    file.createDate = m.createDate
+                    file.modifyDate = m.modifyDate
+                    file.imageDescription = m.imageDescription
+                    file.captionAbstract = m.captionAbstract
+                    file.subject = m.subject
+                    file.keywords = m.keywords
+                    file.lastKeywordXMP = m.lastKeywordXMP
+                }
+                file.markClean()
+            }
+
+            isLoading = false
+            let successMessage: String
+            switch (newURLs.count, reloadURLs.count) {
+            case (0, let reloadCount):
+                successMessage = "Refreshed metadata for \(reloadCount) file(s)."
+            case (let newCount, 0):
+                successMessage = "Loaded \(newCount) file(s)."
+            default:
+                successMessage = "Loaded \(newURLs.count) new file(s) and refreshed metadata for \(reloadURLs.count) existing file(s)."
+            }
+            endOperation(successMessage: successMessage)
+        }
     }
 
     func importFolder(_ url: URL) {
@@ -103,6 +208,29 @@ class FileListViewModel {
             if isImageFile(fileURL) { urls.append(fileURL) }
         }
         importFiles(urls)
+    }
+
+    private let metadataBatchSize = 80
+
+    private func loadMetadata(for urls: [URL]) async -> [URL: ExifToolService.FileMetadata] {
+        var merged: [URL: ExifToolService.FileMetadata] = [:]
+        let chunks = stride(from: 0, to: urls.count, by: metadataBatchSize).map { start in
+            Array(urls[start..<min(start + metadataBatchSize, urls.count)])
+        }
+
+        for (index, chunk) in chunks.enumerated() {
+            let batchMetadata = await runBackground { ExifToolService.readAllMetadata(from: chunk) }
+            for (url, metadata) in batchMetadata {
+                merged[url] = metadata
+            }
+            let loadedCount = min((index + 1) * metadataBatchSize, urls.count)
+            updateOperation(
+                progress: Double(index + 1) / Double(chunks.count),
+                message: "Reading metadata (\(loadedCount)/\(urls.count))..."
+            )
+        }
+
+        return merged
     }
 
     // MARK: - Remove / Clear
@@ -144,6 +272,33 @@ class FileListViewModel {
         lastSaveFeedback = nil
         lastDescriptionSaveFeedback = nil
         statusMessage = nil
+        operationMessage = nil
+        operationProgress = nil
+    }
+
+    private func beginOperation(message: String, determinate: Bool = false) {
+        operationMessage = message
+        operationProgress = determinate ? 0 : nil
+        statusMessage = nil
+    }
+
+    private func updateOperation(progress: Double, message: String? = nil) {
+        operationProgress = progress
+        if let message {
+            operationMessage = message
+        }
+    }
+
+    private func endOperation(successMessage: String?) {
+        operationMessage = nil
+        operationProgress = nil
+        statusMessage = successMessage
+    }
+
+    private func runBackground<T>(_ work: @escaping @Sendable () -> T) async -> T {
+        await Task.detached(priority: .userInitiated) {
+            work()
+        }.value
     }
 
     // MARK: - Bulk Edit
@@ -240,6 +395,52 @@ class FileListViewModel {
         statusMessage = "Applied description to \(targets.count) file(s)."
     }
 
+    // MARK: - Date helpers
+
+    /// Copies CreateDate into DateTimeOriginal for each selected file.
+    func copyCreateDateToDateTimeOriginalSelection() {
+        copyDateFieldToDateTimeOriginal(
+            sourceKeyPath: \ImageFile.createDate,
+            label: "Create Date"
+        )
+    }
+
+    /// Copies ModifyDate into DateTimeOriginal for each selected file.
+    func copyModifyDateToDateTimeOriginalSelection() {
+        copyDateFieldToDateTimeOriginal(
+            sourceKeyPath: \ImageFile.modifyDate,
+            label: "Modify Date"
+        )
+    }
+
+    private func copyDateFieldToDateTimeOriginal(
+        sourceKeyPath: KeyPath<ImageFile, String?>,
+        label: String
+    ) {
+        let targets = selectedFiles.filter { $0[keyPath: sourceKeyPath]?.isEmpty == false }
+        guard !targets.isEmpty else {
+            statusMessage = "\(label) is unavailable for the selected file(s)."
+            return
+        }
+
+        var updatedCount = 0
+        for file in selectedFiles {
+            guard let value = file[keyPath: sourceKeyPath], !value.isEmpty else {
+                continue
+            }
+            if file.dateTimeOriginal != value {
+                file.dateTimeOriginal = value
+                updatedCount += 1
+            }
+        }
+
+        if updatedCount > 0 {
+            statusMessage = "Copied \(label) into DateTimeOriginal for \(updatedCount) file(s)."
+        } else {
+            statusMessage = "Selected files already have matching DateTimeOriginal values."
+        }
+    }
+
     // MARK: - Save
 
     /// The number of files with unsaved changes.
@@ -248,15 +449,30 @@ class FileListViewModel {
     /// Saves all dirty files in batch — groups by distinct field values
     /// so that files with the same edits are written together.
     func saveAll() {
+        Task { await saveAllAsync() }
+    }
+
+    private func saveAllAsync() async -> Bool {
         let dirtyFiles = files.filter(\.isDirty)
         guard !dirtyFiles.isEmpty else {
             statusMessage = "No changes to save."
-            return
+            return true
         }
 
-        // Determine which files changed which field
+        guard !isSaving else {
+            statusMessage = "Save already in progress."
+            return false
+        }
+
+        isSaving = true
+        beginOperation(message: "Saving changes...", determinate: false)
+
         let dateChangedFiles = dirtyFiles.filter { $0.dateTimeOriginal != $0.originalDateTimeOriginal }
         let descChangedFiles = dirtyFiles.filter { $0.description != $0.originalDescription }
+        let dateGroups = Dictionary(grouping: dateChangedFiles) { $0.dateTimeOriginal }
+        let descGroups = Dictionary(grouping: descChangedFiles) { $0.description }
+        let totalGroups = dateGroups.count + descGroups.count
+        var completedGroups = 0
 
         var totalSuccess = 0
         var totalFail = 0
@@ -264,53 +480,56 @@ class FileListViewModel {
         var dateFeedback: SaveFeedback?
         var descFeedback: SaveFeedback?
 
-        // Track which files were successfully saved (by field)
         var dateSaved = Set<ImageFile.ID>()
         var descSaved = Set<ImageFile.ID>()
 
-        // Save DateTimeOriginal changes grouped by value
-        if !dateChangedFiles.isEmpty {
-            let grouped = Dictionary(grouping: dateChangedFiles) { $0.dateTimeOriginal }
-            for (value, group) in grouped {
-                let urls = group.map(\.url)
-                let result = ExifToolService.writeDateTimeOriginal(value, to: urls)
-                if result.success {
-                    for file in group {
-                        dateSaved.insert(file.id)
-                        dateFeedback = SaveFeedback(
-                            filename: file.filename,
-                            from: file.originalDateTimeOriginal.isEmpty ? "(empty)" : file.originalDateTimeOriginal,
-                            to: file.dateTimeOriginal
-                        )
-                    }
-                    totalSuccess += group.count
-                } else {
-                    totalFail += group.count
-                    lastError = result.output
-                }
+        func updateProgress() {
+            if totalGroups > 0 {
+                updateOperation(progress: Double(completedGroups) / Double(totalGroups), message: "Saving \(completedGroups) of \(totalGroups) groups...")
             }
         }
 
-        // Save Description changes grouped by value
-        if !descChangedFiles.isEmpty {
-            let grouped = Dictionary(grouping: descChangedFiles) { $0.description }
-            for (value, group) in grouped {
-                let urls = group.map(\.url)
-                let result = ExifToolService.writeDescription(value, to: urls)
-                if result.success {
-                    for file in group {
-                        descSaved.insert(file.id)
-                        descFeedback = SaveFeedback(
-                            filename: file.filename,
-                            from: file.originalDescription.isEmpty ? "(empty)" : file.originalDescription,
-                            to: file.description
-                        )
-                    }
-                    totalSuccess += group.count
-                } else {
-                    totalFail += group.count
-                    lastError = result.output
+        for (value, group) in dateGroups {
+            let urls = group.map(\.url)
+            let result = await runBackground { ExifToolService.writeDateTimeOriginal(value, to: urls) }
+            completedGroups += 1
+            updateProgress()
+
+            if result.success {
+                for file in group {
+                    dateSaved.insert(file.id)
+                    dateFeedback = SaveFeedback(
+                        filename: file.filename,
+                        from: file.originalDateTimeOriginal.isEmpty ? "(empty)" : file.originalDateTimeOriginal,
+                        to: file.dateTimeOriginal
+                    )
                 }
+                totalSuccess += group.count
+            } else {
+                totalFail += group.count
+                lastError = result.output
+            }
+        }
+
+        for (value, group) in descGroups {
+            let urls = group.map(\.url)
+            let result = await runBackground { ExifToolService.writeDescription(value, to: urls) }
+            completedGroups += 1
+            updateProgress()
+
+            if result.success {
+                for file in group {
+                    descSaved.insert(file.id)
+                    descFeedback = SaveFeedback(
+                        filename: file.filename,
+                        from: file.originalDescription.isEmpty ? "(empty)" : file.originalDescription,
+                        to: file.description
+                    )
+                }
+                totalSuccess += group.count
+            } else {
+                totalFail += group.count
+                lastError = result.output
             }
         }
 
@@ -326,13 +545,18 @@ class FileListViewModel {
         if let feedback = dateFeedback { lastSaveFeedback = feedback }
         if let feedback = descFeedback { lastDescriptionSaveFeedback = feedback }
 
+        let finalMessage: String
         if totalFail == 0 {
-            statusMessage = "✅ Saved \(totalSuccess) file(s)."
+            finalMessage = "✅ Saved \(totalSuccess) file(s)."
         } else if totalSuccess > 0 {
-            statusMessage = "✅ \(totalSuccess) saved, ❌ \(totalFail) failed. Error: \(lastError)"
+            finalMessage = "✅ \(totalSuccess) saved, ❌ \(totalFail) failed. Error: \(lastError)"
         } else {
-            statusMessage = "❌ Save failed: \(lastError)"
+            finalMessage = "❌ Save failed: \(lastError)"
         }
+
+        isSaving = false
+        endOperation(successMessage: finalMessage)
+        return totalFail == 0
     }
 
     private static let exifDateFormatter: DateFormatter = {
@@ -357,6 +581,10 @@ class FileListViewModel {
     ///   - Clears OffsetTime, OffsetTimeOriginal, OffsetTimeDigitized
     ///   - Copies Description → ImageDescription, Caption-Abstract
     func sanitiseAll() {
+        Task { await sanitiseAllAsync() }
+    }
+
+    private func sanitiseAllAsync() async {
         guard !files.isEmpty else {
             statusMessage = "No files to sanitise."
             return
@@ -365,41 +593,40 @@ class FileListViewModel {
         guard !isSanitising else { return }
 
         isSanitising = true
-        statusMessage = "Sanitising \(files.count) file(s)..."
+        beginOperation(message: "Sanitising \(files.count) file(s)...")
 
-        // Save any dirty files first so we sanitise from clean state
         if dirtyCount > 0 {
-            saveAll()
+            let saveSucceeded = await saveAllAsync()
+            if !saveSucceeded {
+                isSanitising = false
+                endOperation(successMessage: statusMessage)
+                return
+            }
         }
 
         let urls = files.map(\.url)
-        let result = ExifToolService.sanitise(urls)
+        let result = await runBackground { ExifToolService.sanitise(urls) }
 
         if result.success {
-            statusMessage = "✅ Sanitised \(files.count) file(s)."
-            // Re-read metadata so read-only fields update
-            let metadata = ExifToolService.readAllMetadata(from: urls)
+            let metadata = await runBackground { ExifToolService.readAllMetadata(from: urls) }
             for file in files {
                 if let m = metadata[file.url] {
-                    // Set current values first (these will mark dirty via didSet
-                    // since originals are still old), then reset originals to match.
                     if let dto = m.dateTimeOriginal {
                         file.dateTimeOriginal = dto
                     }
                     if let desc = m.description {
                         file.description = desc
                     }
-                    // Update read-only fields
                     file.createDate = m.createDate
                     file.modifyDate = m.modifyDate
                     file.imageDescription = m.imageDescription
                     file.captionAbstract = m.captionAbstract
                 }
-                // markClean syncs originals to current, clearing dirty
                 file.markClean()
             }
+            endOperation(successMessage: "✅ Sanitised \(files.count) file(s).")
         } else {
-            statusMessage = "❌ Sanitise failed: \(result.output)"
+            endOperation(successMessage: "❌ Sanitise failed: \(result.output)")
         }
 
         isSanitising = false
@@ -410,6 +637,10 @@ class FileListViewModel {
     /// Runs the rename pipeline on all loaded files.
     /// Renames files to: `{DateTimeOriginal}_{###}_{Description}.{ext}`
     func renameAll() {
+        Task { await renameAllAsync() }
+    }
+
+    private func renameAllAsync() async {
         guard !files.isEmpty else {
             statusMessage = "No files to rename."
             return
@@ -417,31 +648,31 @@ class FileListViewModel {
 
         guard !isRenaming else { return }
 
-        // Save any dirty files first so we rename with clean metadata
         if dirtyCount > 0 {
-            saveAll()
+            let saveSucceeded = await saveAllAsync()
+            if !saveSucceeded {
+                return
+            }
         }
 
         isRenaming = true
-        statusMessage = "Renaming \(files.count) file(s)..."
+        beginOperation(message: "Renaming \(files.count) file(s)...")
         clearFeedback()
 
         let urls = files.map(\.url)
-        let result = ExifToolService.renameFiles(urls)
+        let result = await runBackground { ExifToolService.renameFiles(urls) }
 
         if result.success {
             let mappingCount = result.pathMapping.count
-            statusMessage = "✅ Renamed \(mappingCount) file(s) successfully."
-
-            // Update each file's URL and filename to match the new names on disk
             for file in files {
                 if let newPath = result.pathMapping[file.url.path] {
                     let newURL = URL(fileURLWithPath: newPath)
                     file.updateURL(newURL)
                 }
             }
+            endOperation(successMessage: "✅ Renamed \(mappingCount) file(s) successfully.")
         } else {
-            statusMessage = "❌ Rename failed: \(result.output)"
+            endOperation(successMessage: "❌ Rename failed: \(result.output)")
         }
 
         isRenaming = false

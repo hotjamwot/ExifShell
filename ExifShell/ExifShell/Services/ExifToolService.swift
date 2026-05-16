@@ -12,6 +12,28 @@ enum ExifToolService {
     /// (Xcode does not inherit your shell PATH, which is the most common
     /// reason for ExifTool to appear missing.)
     private static let exifToolPath: String = {
+        // First, try `which exiftool` using the user's PATH — this helps when
+        // exiftool is installed via Homebrew and the runtime PATH points to it.
+        let whichProcess = Process()
+        whichProcess.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        whichProcess.arguments = ["which", "exiftool"]
+        let whichPipe = Pipe()
+        whichProcess.standardOutput = whichPipe
+        whichProcess.standardError = FileHandle.nullDevice
+        do {
+            try whichProcess.run()
+            whichProcess.waitUntilExit()
+            if whichProcess.terminationStatus == 0 {
+                let data = whichPipe.fileHandleForReading.readDataToEndOfFile()
+                if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
+                    if FileManager.default.isExecutableFile(atPath: path) {
+                        return path
+                    }
+                }
+            }
+        } catch {}
+
+        // If `which` didn't return an executable path, fall back to common locations.
         let candidates = [
             "/opt/homebrew/bin/exiftool",   // Apple Silicon Homebrew
             "/usr/local/bin/exiftool",      // Intel Homebrew
@@ -23,25 +45,6 @@ enum ExifToolService {
                 return path
             }
         }
-        // Fallback: ask `which` in case it's somewhere unusual.
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["which", "exiftool"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-            process.waitUntilExit()
-            if process.terminationStatus == 0 {
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                if let path = String(data: data, encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines),
-                    !path.isEmpty {
-                    return path
-                }
-            }
-        } catch {}
         return ""  // Will be detected at operation time
     }()
 
@@ -61,6 +64,11 @@ enum ExifToolService {
             return "ExifTool at '\(exifToolPath)' is no longer executable."
         }
         return nil
+    }
+
+    /// Public helper to allow callers to check availability and show a helpful message.
+    static func availabilityError() -> String? {
+        return missingToolError
     }
 
     // MARK: - Read
@@ -142,6 +150,9 @@ enum ExifToolService {
         let description: String?
         let imageDescription: String?
         let captionAbstract: String?
+        let subject: String?
+        let keywords: String?
+        let lastKeywordXMP: String?
     }
 
     /// Reads all supported metadata fields from multiple files in a **single** ExifTool invocation.
@@ -154,7 +165,8 @@ enum ExifToolService {
         if missingToolError != nil {
             return Dictionary(uniqueKeysWithValues: urls.map { ($0, FileMetadata(
                 dateTimeOriginal: nil, createDate: nil, modifyDate: nil,
-                description: nil, imageDescription: nil, captionAbstract: nil
+                description: nil, imageDescription: nil, captionAbstract: nil, subject: nil,
+                keywords: nil, lastKeywordXMP: nil
             )) })
         }
 
@@ -167,7 +179,10 @@ enum ExifToolService {
             "-ModifyDate",
             "-Description",
             "-ImageDescription",
-            "-Caption-Abstract"
+            "-Caption-Abstract",
+            "-Subject",
+            "-Keywords",
+            "-LastKeywordXMP"
         ] + urls.map(\.path)
 
         let pipe = Pipe()
@@ -181,7 +196,8 @@ enum ExifToolService {
             guard process.terminationStatus == 0 else {
                 return Dictionary(uniqueKeysWithValues: urls.map { ($0, FileMetadata(
                     dateTimeOriginal: nil, createDate: nil, modifyDate: nil,
-                    description: nil, imageDescription: nil, captionAbstract: nil
+                    description: nil, imageDescription: nil, captionAbstract: nil, subject: nil,
+                    keywords: nil, lastKeywordXMP: nil
                 )) })
             }
 
@@ -189,7 +205,8 @@ enum ExifToolService {
             guard !data.isEmpty else {
                 return Dictionary(uniqueKeysWithValues: urls.map { ($0, FileMetadata(
                     dateTimeOriginal: nil, createDate: nil, modifyDate: nil,
-                    description: nil, imageDescription: nil, captionAbstract: nil
+                    description: nil, imageDescription: nil, captionAbstract: nil, subject: nil,
+                    keywords: nil, lastKeywordXMP: nil
                 )) })
             }
 
@@ -204,14 +221,18 @@ enum ExifToolService {
                     modifyDate: entry.modifyDate,
                     description: entry.description,
                     imageDescription: entry.imageDescription,
-                    captionAbstract: entry.captionAbstract
+                    captionAbstract: entry.captionAbstract,
+                    subject: entry.subject?.joined(separator: ", "),
+                    keywords: entry.keywords?.joined(separator: ", "),
+                    lastKeywordXMP: entry.lastKeywordXMP?.joined(separator: ", ")
                 )
             }
             for url in urls {
                 if !results.keys.contains(url) {
                     results[url] = FileMetadata(
                         dateTimeOriginal: nil, createDate: nil, modifyDate: nil,
-                        description: nil, imageDescription: nil, captionAbstract: nil
+                        description: nil, imageDescription: nil, captionAbstract: nil, subject: nil,
+                        keywords: nil, lastKeywordXMP: nil
                     )
                 }
             }
@@ -219,7 +240,8 @@ enum ExifToolService {
         } catch {
             return Dictionary(uniqueKeysWithValues: urls.map { ($0, FileMetadata(
                 dateTimeOriginal: nil, createDate: nil, modifyDate: nil,
-                description: nil, imageDescription: nil, captionAbstract: nil
+                description: nil, imageDescription: nil, captionAbstract: nil, subject: nil,
+                keywords: nil, lastKeywordXMP: nil
             )) })
         }
     }
@@ -555,6 +577,9 @@ private struct FullExifToolOutput: Decodable {
     let description: String?
     let imageDescription: String?
     let captionAbstract: String?
+    let subject: [String]?
+    let keywords: [String]?
+    let lastKeywordXMP: [String]?
 
     enum CodingKeys: String, CodingKey {
         case sourceFile = "SourceFile"
@@ -564,5 +589,40 @@ private struct FullExifToolOutput: Decodable {
         case description = "Description"
         case imageDescription = "ImageDescription"
         case captionAbstract = "Caption-Abstract"
+        case subject = "Subject"
+        case keywords = "Keywords"
+        case lastKeywordXMP = "LastKeywordXMP"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sourceFile = try container.decode(String.self, forKey: .sourceFile)
+        dateTimeOriginal = try container.decodeIfPresent(String.self, forKey: .dateTimeOriginal)
+        createDate = try container.decodeIfPresent(String.self, forKey: .createDate)
+        modifyDate = try container.decodeIfPresent(String.self, forKey: .modifyDate)
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        imageDescription = try container.decodeIfPresent(String.self, forKey: .imageDescription)
+        captionAbstract = try container.decodeIfPresent(String.self, forKey: .captionAbstract)
+        if let subjects = try? container.decode([String].self, forKey: .subject) {
+            subject = subjects
+        } else if let subjectString = try? container.decode(String.self, forKey: .subject) {
+            subject = [subjectString]
+        } else {
+            subject = nil
+        }
+        if let keywordsList = try? container.decode([String].self, forKey: .keywords) {
+            keywords = keywordsList
+        } else if let keywordString = try? container.decode(String.self, forKey: .keywords) {
+            keywords = [keywordString]
+        } else {
+            keywords = nil
+        }
+        if let xmpList = try? container.decode([String].self, forKey: .lastKeywordXMP) {
+            lastKeywordXMP = xmpList
+        } else if let xmpString = try? container.decode(String.self, forKey: .lastKeywordXMP) {
+            lastKeywordXMP = [xmpString]
+        } else {
+            lastKeywordXMP = nil
+        }
     }
 }

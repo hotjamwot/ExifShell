@@ -15,6 +15,17 @@ struct PreviewPanel: View {
                             .truncationMode(.middle)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
+                        if viewModel.selectedFiles.count > 1 {
+                            Text("\(viewModel.selectedFiles.count) files selected")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Text("Copy actions will use each selected file’s own source date.")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
                         // Thumbnail
                         if let image = file.thumbnail {
                             Image(nsImage: image)
@@ -64,10 +75,46 @@ struct PreviewPanel: View {
                                 .foregroundColor(.secondary)
                                 .textCase(.uppercase)
 
-                            metadataRow(label: "Create Date", value: file.createDate)
-                            metadataRow(label: "Modify Date", value: file.modifyDate)
-                            metadataRow(label: "Image Description", value: file.imageDescription)
-                            metadataRow(label: "Caption Abstract", value: file.captionAbstract)
+                            // Show only metadata fields that have values
+                            if let v = file.createDate, !v.isEmpty {
+                                metadataRow(
+                                    label: "Create Date",
+                                    value: v,
+                                    action: viewModel.selectedFiles.contains { $0.createDate?.isEmpty == false } ? {
+                                        viewModel.copyCreateDateToDateTimeOriginalSelection()
+                                    } : nil
+                                )
+                            }
+
+                            if let v = file.modifyDate, !v.isEmpty {
+                                metadataRow(
+                                    label: "Modify Date",
+                                    value: v,
+                                    action: viewModel.selectedFiles.contains { $0.modifyDate?.isEmpty == false } ? {
+                                        viewModel.copyModifyDateToDateTimeOriginalSelection()
+                                    } : nil
+                                )
+                            }
+
+                            if let v = file.imageDescription, !v.isEmpty {
+                                metadataRow(label: "Image Description", value: v)
+                            }
+
+                            if let v = file.captionAbstract, !v.isEmpty {
+                                metadataRow(label: "Caption Abstract", value: v)
+                            }
+
+                            if let v = file.subject, !v.isEmpty {
+                                metadataRow(label: "Subject", value: v)
+                            }
+
+                            if let v = file.keywords, !v.isEmpty {
+                                metadataRow(label: "Keywords", value: v)
+                            }
+
+                            if let v = file.lastKeywordXMP, !v.isEmpty {
+                                metadataRow(label: "Last Keyword XMP", value: v)
+                            }
                         }
 
                         // --- Save Feedback ---
@@ -76,6 +123,24 @@ struct PreviewPanel: View {
                         }
                         if let feedback = viewModel.lastDescriptionSaveFeedback {
                             saveFeedbackRow(label: "Desc", feedback: feedback)
+                        }
+
+                        if viewModel.operationMessage != nil || viewModel.operationProgress != nil {
+                            VStack(alignment: .leading, spacing: 6) {
+                                if let message = viewModel.operationMessage {
+                                    Text(message)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                if let progress = viewModel.operationProgress {
+                                    ProgressView(value: progress, total: 1.0)
+                                        .progressViewStyle(.linear)
+                                } else {
+                                    ProgressView()
+                                        .progressViewStyle(.linear)
+                                }
+                            }
+                            .padding(.bottom, 8)
                         }
 
                         // Save button
@@ -195,16 +260,27 @@ struct PreviewPanel: View {
         }
     }
 
-    /// A read-only metadata row: label + monospaced value.
+    /// A read-only metadata row: label + monospaced value, with an optional action button.
     @ViewBuilder
-    private func metadataRow(label: String, value: String?) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.caption)
-                .foregroundColor(.secondary)
-            Text(value?.isEmpty == false ? value! : "—")
-                .font(.system(.body, design: .monospaced))
-                .foregroundColor(.primary)
+    private func metadataRow(label: String, value: String?, action: (() -> Void)? = nil) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text(value?.isEmpty == false ? value! : "—")
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundColor(.primary)
+            }
+            Spacer()
+            if let action {
+                Button(action: action) {
+                    Label("Copy", systemImage: "doc.on.doc")
+                        .font(.system(.caption, design: .monospaced))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
         }
     }
 

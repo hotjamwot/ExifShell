@@ -130,8 +130,8 @@ Sources/
 ### FileTableView
 - SwiftUI `List` (not `Table` — `List` gives reliable bindings with `@Observable`).
 - Uses `Set<ImageFile.ID>` for `selection`, enabling multi-select via ⌘+click.
-- Uses `@Bindable` to create a `$binding` for each file's `dateTimeOriginal` and `description`.
-- **Orange text:** Both the DateTimeOriginal and Description `TextField` use `.foregroundColor(isDirty ? .orange : .primary)` to clearly indicate unsaved changes.
+- Uses `@Bindable` to create a `$binding` for each file's `dateTimeOriginal` and `description`.- **Sortable headers:** Filename, DateTimeOriginal, and Description headers are clickable and maintain `sortKey` / `sortAscending` state.
+- **Compact header:** Reduced header padding and constrained height so the header is a small bar.- **Orange text:** Both the DateTimeOriginal and Description `TextField` use `.foregroundColor(isDirty ? .orange : .primary)` to clearly indicate unsaved changes.
 - **Three columns:** Filename | DateTimeOriginal (editable) | Description (editable).
 - Selection syncs to both `viewModel.selectedFile` (preview) and `viewModel.selectedFiles` (bulk edit) via `onChange(of: selectedIDs)`.
 
@@ -146,6 +146,8 @@ Sources/
   - Modify Date (from `ModifyDate` EXIF tag).
   - ImageDescription (from `ImageDescription` EXIF tag).
   - Caption-Abstract (from `Caption-Abstract` IPTC tag).
+  - Subject (from `Subject`, joined into a string when present).
+- Shows a selection summary when multiple files are selected, and copy actions use each selected file's own source date.
 - **Save feedback:** Two independent badges — "DTO: old → new" for date changes and "Desc: old → new" for description changes. Both clear on navigation.
 - **Single Save button:** One button labelled "Save Changes (N)" showing the dirty count. Disabled when nothing is dirty. Keyboard shortcut: `⌘S`.
 
@@ -162,7 +164,7 @@ Sources/
 
 ## Data Flow
 
-1. **Import:** User drops files → `ContentView.onDrop` resolves URLs → ViewModel filters by extension, deduplicates, batch-reads full metadata via `ExifToolService.readAllMetadata(from:)` (single process call) → populates all fields including date, description, create/modify dates, imageDescription, captionAbstract.
+1. **Import:** User drops files → `ContentView.onDrop` resolves URLs → ViewModel filters by extension, deduplicates, immediately appends placeholder `ImageFile` entries to the list → reads metadata in batches of 80 via `loadMetadata(for:)` → updates `operationProgress` and `operationMessage` after each batch → populates all fields including date, description, create/modify dates, imageDescription, captionAbstract, subject.
 2. **Edit (single):** User clicks into the DateTimeOriginal or Description `TextField` → edits value → binding writes to the `@Observable` model → `didSet` on the respective field marks file dirty → UI auto-updates.
 3. **Edit (bulk):** User selects multiple files (⌘+click) → bulk edit bars appear → types a value → presses Enter or "Apply" → `applyBulkEdit()` or `applyBulkEditDescription()` sets value on selected files.
 4. **Review:** Preview panel shows grey (original) → green (proposed) diff for both date and description. Read-only metadata displayed below.
@@ -172,7 +174,7 @@ Sources/
 ## Key Design Decisions
 
 ### Batch Reads
-ExifTool can process multiple files in a single invocation. The service layer accepts `[URL]` for both reads and writes, reducing process spawn overhead dramatically. The full metadata read fetches 6 tags in one pass.
+ExifTool can process multiple files in a single invocation. The service layer accepts `[URL]` for both reads and writes, reducing process spawn overhead dramatically. Metadata is loaded in chunks of 80 files so rows appear immediately and the UI can track determinate progress as each batch completes.
 
 ### ExifTool Path Resolution
 The app does not rely on PATH propagation (which breaks in Xcode). Instead it checks common Homebrew/MacPorts install paths at startup and falls back to `which`.

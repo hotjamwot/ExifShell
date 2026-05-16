@@ -44,6 +44,9 @@ final class ImageFile: Identifiable, Hashable {
     var modifyDate: String?
     var imageDescription: String?
     var captionAbstract: String?
+    var subject: String?
+    var keywords: String?
+    var lastKeywordXMP: String?
 
     // MARK: - Dirty State
 
@@ -59,7 +62,10 @@ final class ImageFile: Identifiable, Hashable {
         createDate: String? = nil,
         modifyDate: String? = nil,
         imageDescription: String? = nil,
-        captionAbstract: String? = nil
+        captionAbstract: String? = nil,
+        subject: String? = nil,
+        keywords: String? = nil,
+        lastKeywordXMP: String? = nil
     ) {
         self.url = url
         self.filename = url.lastPathComponent
@@ -71,6 +77,9 @@ final class ImageFile: Identifiable, Hashable {
         self.modifyDate = modifyDate
         self.imageDescription = imageDescription
         self.captionAbstract = captionAbstract
+        self.subject = subject
+        self.keywords = keywords
+        self.lastKeywordXMP = lastKeywordXMP
         self.thumbnail = NSImage(contentsOf: url)
     }
 
