@@ -708,6 +708,10 @@ class FileListViewModel {
     ///   - Copies DateTimeOriginal → CreateDate, ModifyDate
     ///   - Clears OffsetTime, OffsetTimeOriginal, OffsetTimeDigitized
     ///   - Copies Description → ImageDescription, Caption-Abstract
+    ///
+    /// Processed in batches of `metadataBatchSize` so the user sees live
+    /// determinate progress and ExifTool isn't overwhelmed with a single
+    /// massive command that appears to hang.
     func sanitiseAll() {
         Task { await sanitiseAllAsync() }
     }
@@ -721,8 +725,9 @@ class FileListViewModel {
         guard !isSanitising else { return }
 
         isSanitising = true
-        beginOperation(message: "Sanitising \(files.count) file(s)...")
+        beginOperation(message: "Sanitising \(files.count) file(s)...", determinate: true)
 
+        // Save any unsaved changes first so we sanitise the latest values
         if dirtyCount > 0 {
             let saveSucceeded = await saveAllAsync()
             if !saveSucceeded {
@@ -732,15 +737,47 @@ class FileListViewModel {
             }
         }
 
-        let urls = files.map(\.url)
-        let result = await runBackground { ExifToolService.sanitise(urls) }
+        let allURLs = files.map(\.url)
+        let chunks = stride(from: 0, to: allURLs.count, by: metadataBatchSize).map { start in
+            Array(allURLs[start..<min(start + metadataBatchSize, allURLs.count)])
+        }
+        let totalChunks = chunks.count
 
-        if result.success {
-            let metadata = await runBackground { ExifToolService.readAllMetadata(from: urls) }
-            applyMetadata(metadata, to: files)
-            endOperation(successMessage: "✅ Sanitised \(files.count) file(s).")
+        var allSucceeded = true
+        var lastError: String?
+        var processedUpTo = 0
+
+        for (index, chunk) in chunks.enumerated() {
+            processedUpTo = min((index + 1) * metadataBatchSize, allURLs.count)
+            updateOperation(
+                progress: Double(index) / Double(totalChunks),
+                message: "Sanitising (\(processedUpTo)/\(allURLs.count))..."
+            )
+
+            let result = await runBackground { ExifToolService.sanitise(chunk) }
+            guard result.success else {
+                allSucceeded = false
+                lastError = result.output
+                break
+            }
+        }
+
+        // Always re-read metadata after sanitise so the in-memory state
+        // reflects the cleaned EXIF data, even if the operation partially failed.
+        let reReadMessage = allSucceeded
+            ? "Reloading metadata..."
+            : "Reloading metadata after partial failure..."
+        updateOperation(
+            progress: Double(processedUpTo) / Double(allURLs.count),
+            message: reReadMessage
+        )
+        let metadata = await loadMetadata(for: allURLs)
+        applyMetadata(metadata, to: files)
+
+        if allSucceeded {
+            endOperation(successMessage: "✅ Sanitised \(allURLs.count) file(s).")
         } else {
-            endOperation(successMessage: "❌ Sanitise failed: \(result.output)")
+            endOperation(successMessage: "❌ Sanitise failed after \(processedUpTo) file(s): \(lastError ?? "unknown error")")
         }
 
         isSanitising = false
@@ -750,6 +787,10 @@ class FileListViewModel {
 
     /// Runs the rename pipeline on all loaded files.
     /// Renames files to: `{DateTimeOriginal}_{###}_{Description}.{ext}`
+    ///
+    /// Processed in batches of `metadataBatchSize` so the user sees live
+    /// determinate progress and ExifTool isn't overwhelmed with a single
+    /// massive command that appears to hang.
     func renameAll() {
         Task { await renameAllAsync() }
     }
@@ -762,6 +803,7 @@ class FileListViewModel {
 
         guard !isRenaming else { return }
 
+        // Save any unsaved changes first so we rename with the latest metadata values
         if dirtyCount > 0 {
             let saveSucceeded = await saveAllAsync()
             if !saveSucceeded {
@@ -770,23 +812,50 @@ class FileListViewModel {
         }
 
         isRenaming = true
-        beginOperation(message: "Renaming \(files.count) file(s)...")
+        beginOperation(message: "Renaming \(files.count) file(s)...", determinate: true)
         clearFeedback()
 
-        let urls = files.map(\.url)
-        let result = await runBackground { ExifToolService.renameFiles(urls) }
+        let allURLs = files.map(\.url)
+        let chunks = stride(from: 0, to: allURLs.count, by: metadataBatchSize).map { start in
+            Array(allURLs[start..<min(start + metadataBatchSize, allURLs.count)])
+        }
+        let totalChunks = chunks.count
 
-        if result.success {
-            let mappingCount = result.pathMapping.count
-            for file in files {
-                if let newPath = result.pathMapping[file.url.path] {
-                    let newURL = URL(fileURLWithPath: newPath)
-                    file.updateURL(newURL)
+        var totalRenamed = 0
+        var allSucceeded = true
+        var lastError: String?
+
+        for (index, chunk) in chunks.enumerated() {
+            let processedCount = min((index + 1) * metadataBatchSize, allURLs.count)
+            updateOperation(
+                progress: Double(index) / Double(totalChunks),
+                message: "Renaming (\(processedCount)/\(allURLs.count))..."
+            )
+
+            let result = await runBackground { ExifToolService.renameFiles(chunk) }
+
+            if result.success {
+                let mappingCount = result.pathMapping.count
+                totalRenamed += mappingCount
+
+                // Update in-memory URL for each successfully renamed file
+                for file in files {
+                    if let newPath = result.pathMapping[file.url.path] {
+                        let newURL = URL(fileURLWithPath: newPath)
+                        file.updateURL(newURL)
+                    }
                 }
+            } else {
+                allSucceeded = false
+                lastError = result.output
+                break
             }
-            endOperation(successMessage: "✅ Renamed \(mappingCount) file(s) successfully.")
+        }
+
+        if allSucceeded {
+            endOperation(successMessage: "✅ Renamed \(totalRenamed) file(s) successfully.")
         } else {
-            endOperation(successMessage: "❌ Rename failed: \(result.output)")
+            endOperation(successMessage: "❌ Rename failed after \(totalRenamed) file(s): \(lastError ?? "unknown error")")
         }
 
         isRenaming = false

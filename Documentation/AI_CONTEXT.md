@@ -115,13 +115,17 @@ If not found, `missingToolError` returns a descriptive message and all read/writ
 - This is distinct from `⌘K` (clear all) — delete only removes selected files.
 
 ### Sanitise Pipeline
-- `ExifToolService.sanitise(_ urls:)` runs the full sanitise in one ExifTool invocation:
+- `ExifToolService.sanitise(_ urls:)` runs the full sanitise on the given files in one ExifTool invocation:
   - Normalises DateTimeOriginal format via `DateFmt`
   - Propagates DateTimeOriginal → CreateDate, ModifyDate
   - Clears OffsetTime, OffsetTimeOriginal, OffsetTimeDigitized
   - Copies Description → ImageDescription, Caption-Abstract
-- `FileListViewModel.sanitiseAll()` first saves any dirty files, then runs sanitise on all loaded files, then re-reads metadata and resets dirty state.
+- `FileListViewModel.sanitiseAll()` first saves any dirty files, then processes files in **batches of 80** with live determinate progress (`"Sanitising (X/Y)..."`), then re-reads all metadata from disk to refresh the display. This prevents ExifTool from appearing to hang on large batches and gives the user real-time feedback.
 - The "Sanitise All" button in PreviewPanel is disabled while running and shows a ProgressView.
+
+### Rename Pipeline
+- `ExifToolService.renameFiles(_ urls:)` renames files to `{DateTimeOriginal}_{###}_{Description}.{ext}` in one ExifTool invocation using `-FileName<` expressions.
+- `FileListViewModel.renameAll()` first saves any dirty files, then processes files in **batches of 80** with live determinate progress (`"Renaming (X/Y)..."`), and updates the in-memory URL for each renamed file from the path mapping returned by ExifTool.
 
 ### Keyboard Shortcuts
 - **⌘S** (app-wide via hidden button in ContentView) — saves all dirty files.

@@ -111,7 +111,7 @@ Sources/
 - `var bulkEditValue: String` — the text field value from the bulk edit bars (shared for date & description).
 - `lastSaveFeedback: SaveFeedback?` — holds the most recent DateTimeOriginal save result.
 - `lastDescriptionSaveFeedback: SaveFeedback?` — holds the most recent Description save result.
-- `importFiles(_:)` / `importFolder(_:)` — validates image types via extension check, deduplicates by URL, batch-reads full metadata via `ExifToolService.readAllMetadata(from:)`, populates all fields including createDate, modifyDate, description, imageDescription, captionAbstract.
+- `importFiles(_:)` / `importFolder(_:)` — validates image types via extension check, deduplicates by URL, batch-reads full metadata via `ExifToolService.readAllMetadata(from:)` in chunks of 80 files with live determinate progress, populates all fields including createDate, modifyDate, description, imageDescription, captionAbstract.
 - `clearAll()` — removes all files and resets state (⌘K shortcut).
 - `applyBulkEdit()` — sets `dateTimeOriginal` on all `selectedFiles` to `bulkEditValue`.
 - `applyBulkEditDescription()` — sets `description` on all `selectedFiles` to `bulkEditValue`.
@@ -121,7 +121,8 @@ Sources/
   3. Groups dirty description files by value → `writeDescription()` per group.
   4. Only marks a file clean if ALL its field writes succeeded.
   5. Updates independent feedback for date and description saves.
-- `dirtyCount: Int` — computed property for button label and feedback.
+- `sanitiseAll()` — saves dirty files first, then processes files in **batches of 80** with live determinate progress (`"Sanitising (X/Y)..."`), then re-reads all metadata from disk to refresh the display.
+- `renameAll()` — saves dirty files first, then processes files in **batches of 80** with live determinate progress (`"Renaming (X/Y)..."`), updates the in-memory URL for renamed files via the ExifTool path mapping.
 
 ### DropZoneView
 - Purely visual. Shows the empty-state icon and instructions when no files are loaded.
