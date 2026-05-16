@@ -1,6 +1,38 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+// ============================================================================
+// ContentView
+// ============================================================================
+// The root view of ExifShell. Manages two states:
+//
+//   Empty state (files.isEmpty):
+//     Shows DropZoneView for initial drag-and-drop.
+//
+//   Loaded state (files non-empty):
+//     HSplitView with FileTableView (left) and PreviewPanel (right).
+//     Bulk edit bars appear above the table when 2+ files are selected.
+//     Status bar shows operation progress when active.
+//
+// Responsibilities:
+//   - Drag-and-drop: resolves .fileURL providers, separates folders from files
+//   - Bulk edit UI: DateTimeOriginal (set/offset) and Description bars
+//   - Status bar: operation messages + progress indicator
+//   - App-wide keyboard shortcuts (⌘K, ⌘S, ⌫ Delete) via hidden background buttons
+//   - Loading overlay with progress when viewModel.isLoading
+//
+// Types consumed:
+//   - FileListViewModel (all state and action methods)
+//   - DropZoneView / FileTableView / PreviewPanel (child views)
+//
+// Design note:
+//   Bulk edit bars use @ViewBuilder functions for each mode (date set, date
+//   offset, description) rather than a shared component, because each bar
+//   has sufficiently different controls (segmented picker, sign toggle, unit
+//   picker, text field) that a single generic component would be harder to
+//   read than the duplication.
+// ============================================================================
+
 struct ContentView: View {
     @State private var viewModel = FileListViewModel()
     @State private var isTargeted = false

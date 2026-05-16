@@ -1,7 +1,28 @@
 import Foundation
 
-/// Service for reading and writing image metadata via ExifTool.
-/// All metadata logic is delegated to ExifTool — this is just a shell wrapper.
+// ============================================================================
+// ExifToolService
+// ============================================================================
+// All metadata operations delegate to the ExifTool CLI via Process.
+// This file is a pure shell wrapper — all metadata logic lives in exiftool.
+//
+// Key design patterns:
+//   - Batch reads: pass [URL], get [URL: T] back (single process call).
+//   - Batch writes: pass [URL] with a shared value (single process call).
+//   - All errors return nil/empty/default rather than throwing.
+//   - exifToolPath auto-resolves at static init time, no PATH dependency.
+//
+// Types referenced:
+//   - ImageFile (for the data model layer; service is decoupled via URL keys)
+//   - FileListViewModel (calls this service, doesn't import it directly)
+//   - ExifToolOutput, FullExifToolOutput (private JSON decoders)
+//
+// Commands used (see AI_CONTEXT.md for full list):
+//   Read:    exiftool -json -TAG1 -TAG2 <files...>
+//   Write:   exiftool -overwrite_original -TAG=VALUE <files...>
+//   Sanitise: exiftool [...] '-DateTimeOriginal<${...}' <files...>
+// ============================================================================
+
 enum ExifToolService {
 
     // MARK: - ExifTool Path Resolution
@@ -71,6 +92,89 @@ enum ExifToolService {
         return missingToolError
     }
 
+    // MARK: - Shared Process Runner
+
+    /// Result of a read operation — keeps raw stdout data so JSON decoding
+    /// works without a String → Data round-trip that could corrupt encoding.
+    private struct ReadResult {
+        let success: Bool
+        let stdoutData: Data
+    }
+
+    /// Result of a write operation — returns captured text output.
+    struct WriteResult {
+        let success: Bool
+        let output: String
+    }
+
+    /// Runs exiftool for a **read** operation (stdout is JSON data).
+    /// - Parameter args: Command-line arguments for exiftool.
+    /// - Returns: A ReadResult with the raw stdout data. stderr is discarded.
+    private static func runReadTool(with args: [String]) -> ReadResult {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: exifToolPath)
+        process.arguments = args
+
+        let outPipe = Pipe()
+        process.standardOutput = outPipe
+        // Discard stderr for reads — exiftool may emit warnings there
+        // but the JSON we need is always on stdout
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let data = outPipe.fileHandleForReading.readDataToEndOfFile()
+            // ExifTool can return non-zero exit codes for warnings while
+            // still producing valid JSON on stdout. We trust stdout data.
+            return ReadResult(success: process.terminationStatus == 0, stdoutData: data)
+        } catch {
+            return ReadResult(success: false, stdoutData: Data())
+        }
+    }
+
+    /// Runs exiftool for a **write** operation (captures both stdout and stderr
+    /// as text for error reporting).
+    /// - Parameter args: Command-line arguments for exiftool.
+    /// - Returns: A WriteResult with success status and combined text output.
+    private static func runWriteTool(with args: [String]) -> WriteResult {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: exifToolPath)
+        process.arguments = args
+
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        process.standardOutput = outPipe
+        process.standardError = errPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: outData, encoding: .utf8) ?? ""
+            let errorOutput = String(data: errData, encoding: .utf8) ?? ""
+            let combined = [output, errorOutput]
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            return WriteResult(success: process.terminationStatus == 0, output: combined)
+        } catch {
+            return WriteResult(success: false, output: error.localizedDescription)
+        }
+    }
+
+    /// Creates an empty FileMetadata value (all nil) for use as error/default sentinel.
+    private static func emptyMetadata() -> FileMetadata {
+        FileMetadata(
+            dateTimeOriginal: nil, createDate: nil, modifyDate: nil,
+            description: nil, imageDescription: nil, captionAbstract: nil, subject: nil,
+            keywords: nil, lastKeywordXMP: nil
+        )
+    }
+
     // MARK: - Read
 
     /// Reads `DateTimeOriginal` from a single file using `exiftool -json`.
@@ -90,54 +194,24 @@ enum ExifToolService {
     /// - Returns: A dictionary mapping each URL to its DateTimeOriginal (or nil if missing/error).
     static func readDateTimeOriginal(from urls: [URL]) -> [URL: String?] {
         guard !urls.isEmpty else { return [:] }
-
-        if missingToolError != nil {
-            // Return all-nil so callers still get complete results
+        guard missingToolError == nil else {
             return Dictionary(uniqueKeysWithValues: urls.map { ($0, nil as String?) })
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: exifToolPath)
-        process.arguments = [
-            "-json",
-            "-DateTimeOriginal"
-        ] + urls.map(\.path)
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-
-            guard process.terminationStatus == 0 else {
-                return Dictionary(uniqueKeysWithValues: urls.map { ($0, nil as String?) })
-            }
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard !data.isEmpty else {
-                return Dictionary(uniqueKeysWithValues: urls.map { ($0, nil as String?) })
-            }
-
-            let json = try decoder.decode([ExifToolOutput].self, from: data)
-
-            // Build lookup by SourceFile (filesystem path)
-            var results: [URL: String?] = [:]
-            for entry in json {
-                let url = URL(fileURLWithPath: entry.sourceFile)
-                results[url] = entry.dateTimeOriginal
-            }
-            // Ensure every input URL has an entry (default to nil if ExifTool skipped it)
-            for url in urls {
-                if !results.keys.contains(url) {
-                    results[url] = nil
-                }
-            }
-            return results
-        } catch {
+        let result = runReadTool(with: ["-json", "-DateTimeOriginal"] + urls.map(\.path))
+        guard !result.stdoutData.isEmpty,
+              let json = try? decoder.decode([ExifToolOutput].self, from: result.stdoutData) else {
             return Dictionary(uniqueKeysWithValues: urls.map { ($0, nil as String?) })
         }
+
+        var results: [URL: String?] = [:]
+        for entry in json {
+            results[URL(fileURLWithPath: entry.sourceFile)] = entry.dateTimeOriginal
+        }
+        for url in urls {
+            if !results.keys.contains(url) { results[url] = nil }
+        }
+        return results
     }
 
     // MARK: - Full Metadata Read (Batch)
@@ -161,18 +235,11 @@ enum ExifToolService {
     /// - Returns: A dictionary mapping each URL to its FileMetadata.
     static func readAllMetadata(from urls: [URL]) -> [URL: FileMetadata] {
         guard !urls.isEmpty else { return [:] }
-
-        if missingToolError != nil {
-            return Dictionary(uniqueKeysWithValues: urls.map { ($0, FileMetadata(
-                dateTimeOriginal: nil, createDate: nil, modifyDate: nil,
-                description: nil, imageDescription: nil, captionAbstract: nil, subject: nil,
-                keywords: nil, lastKeywordXMP: nil
-            )) })
+        guard missingToolError == nil else {
+            return Dictionary(uniqueKeysWithValues: urls.map { ($0, emptyMetadata()) })
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: exifToolPath)
-        process.arguments = [
+        let args = [
             "-json",
             "-DateTimeOriginal",
             "-CreateDate",
@@ -185,74 +252,38 @@ enum ExifToolService {
             "-LastKeywordXMP"
         ] + urls.map(\.path)
 
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
+        let result = runReadTool(with: args)
 
-        do {
-            try process.run()
-            process.waitUntilExit()
-
-            guard process.terminationStatus == 0 else {
-                return Dictionary(uniqueKeysWithValues: urls.map { ($0, FileMetadata(
-                    dateTimeOriginal: nil, createDate: nil, modifyDate: nil,
-                    description: nil, imageDescription: nil, captionAbstract: nil, subject: nil,
-                    keywords: nil, lastKeywordXMP: nil
-                )) })
-            }
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard !data.isEmpty else {
-                return Dictionary(uniqueKeysWithValues: urls.map { ($0, FileMetadata(
-                    dateTimeOriginal: nil, createDate: nil, modifyDate: nil,
-                    description: nil, imageDescription: nil, captionAbstract: nil, subject: nil,
-                    keywords: nil, lastKeywordXMP: nil
-                )) })
-            }
-
-            let json = try decoder.decode([FullExifToolOutput].self, from: data)
-
-            var results: [URL: FileMetadata] = [:]
-            for entry in json {
-                let url = URL(fileURLWithPath: entry.sourceFile)
-                results[url] = FileMetadata(
-                    dateTimeOriginal: entry.dateTimeOriginal,
-                    createDate: entry.createDate,
-                    modifyDate: entry.modifyDate,
-                    description: entry.description,
-                    imageDescription: entry.imageDescription,
-                    captionAbstract: entry.captionAbstract,
-                    subject: entry.subject?.joined(separator: ", "),
-                    keywords: entry.keywords?.joined(separator: ", "),
-                    lastKeywordXMP: entry.lastKeywordXMP?.joined(separator: ", ")
-                )
-            }
-            for url in urls {
-                if !results.keys.contains(url) {
-                    results[url] = FileMetadata(
-                        dateTimeOriginal: nil, createDate: nil, modifyDate: nil,
-                        description: nil, imageDescription: nil, captionAbstract: nil, subject: nil,
-                        keywords: nil, lastKeywordXMP: nil
-                    )
-                }
-            }
-            return results
-        } catch {
-            return Dictionary(uniqueKeysWithValues: urls.map { ($0, FileMetadata(
-                dateTimeOriginal: nil, createDate: nil, modifyDate: nil,
-                description: nil, imageDescription: nil, captionAbstract: nil, subject: nil,
-                keywords: nil, lastKeywordXMP: nil
-            )) })
+        // If stdout is empty but we had no error, all files simply have no metadata
+        guard !result.stdoutData.isEmpty,
+              let json = try? decoder.decode([FullExifToolOutput].self, from: result.stdoutData) else {
+            return Dictionary(uniqueKeysWithValues: urls.map { ($0, emptyMetadata()) })
         }
+
+        var results: [URL: FileMetadata] = [:]
+        for entry in json {
+            let url = URL(fileURLWithPath: entry.sourceFile)
+            results[url] = FileMetadata(
+                dateTimeOriginal: entry.dateTimeOriginal,
+                createDate: entry.createDate,
+                modifyDate: entry.modifyDate,
+                description: entry.description,
+                imageDescription: entry.imageDescription,
+                captionAbstract: entry.captionAbstract,
+                subject: entry.subject?.joined(separator: ", "),
+                keywords: entry.keywords?.joined(separator: ", "),
+                lastKeywordXMP: entry.lastKeywordXMP?.joined(separator: ", ")
+            )
+        }
+        for url in urls {
+            if !results.keys.contains(url) {
+                results[url] = emptyMetadata()
+            }
+        }
+        return results
     }
 
     // MARK: - Write (Batch)
-
-    /// Result of a write operation.
-    struct WriteResult {
-        let success: Bool
-        let output: String
-    }
 
     /// Writes `DateTimeOriginal` to one or more files in a single ExifTool call.
     ///
@@ -268,51 +299,17 @@ enum ExifToolService {
         guard !urls.isEmpty else {
             return WriteResult(success: false, output: "No files provided.")
         }
-
         if let error = missingToolError {
             return WriteResult(success: false, output: error)
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: exifToolPath)
-
         // Build the tag=value argument. Explicitly target EXIF:DateTimeOriginal
         // to ensure we write the EXIF tag and not a derived/copied variant.
-        // Since Process passes each array element as a single argv entry,
-        // the space in the value stays intact because it's all one string.
         let tagArg = "-EXIF:DateTimeOriginal=\(value)"
-
-        var args = [
-            "-overwrite_original",
-            tagArg
-        ]
-        args.append(contentsOf: urls.map(\.path))
-        process.arguments = args
-
-        // Capture both stdout and stderr
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = errPipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-
-            let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: outData, encoding: .utf8) ?? ""
-            let errorOutput = String(data: errData, encoding: .utf8) ?? ""
-            let combined = [output, errorOutput]
-                .filter { !$0.isEmpty }
-                .joined(separator: "\n")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-
-            let success = process.terminationStatus == 0
-            return WriteResult(success: success, output: success ? output : combined)
-        } catch {
-            return WriteResult(success: false, output: error.localizedDescription)
-        }
+        // -m ignores minor errors/warnings like MakerNotes offset issues,
+        // so one file with a non-critical warning doesn't block the whole batch.
+        let args = ["-overwrite_original", "-m", tagArg] + urls.map(\.path)
+        return runWriteTool(with: args)
     }
 
     /// Writes a description value to all description-related EXIF tags
@@ -326,46 +323,20 @@ enum ExifToolService {
         guard !urls.isEmpty else {
             return WriteResult(success: false, output: "No files provided.")
         }
-
         if let error = missingToolError {
             return WriteResult(success: false, output: error)
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: exifToolPath)
-
-        var args: [String] = [
+        // -m ignores minor errors/warnings like MakerNotes offset issues,
+        // so one file with a non-critical warning doesn't block the whole batch.
+        let args = [
             "-overwrite_original",
+            "-m",
             "-Description=\(value)",
             "-ImageDescription=\(value)",
             "-Caption-Abstract=\(value)"
-        ]
-        args.append(contentsOf: urls.map(\.path))
-        process.arguments = args
-
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = errPipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-
-            let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: outData, encoding: .utf8) ?? ""
-            let errorOutput = String(data: errData, encoding: .utf8) ?? ""
-            let combined = [output, errorOutput]
-                .filter { !$0.isEmpty }
-                .joined(separator: "\n")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-
-            let success = process.terminationStatus == 0
-            return WriteResult(success: success, output: success ? output : combined)
-        } catch {
-            return WriteResult(success: false, output: error.localizedDescription)
-        }
+        ] + urls.map(\.path)
+        return runWriteTool(with: args)
     }
 
     /// Result of a rename operation, including a mapping of old path → new path.
@@ -396,92 +367,50 @@ enum ExifToolService {
         guard !urls.isEmpty else {
             return RenameResult(success: false, output: "No files provided.", pathMapping: [:])
         }
-
         if let error = missingToolError {
             return RenameResult(success: false, output: error, pathMapping: [:])
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: exifToolPath)
-
         let expression = #"-FileName<${DateTimeOriginal}_%03.c_${Description;if($_){s/'\''//g;s/[^\p{L}\p{N}]+/_/g;s/^_+|_+$//g}}.%e"#
+        let args = ["-v", "-m", expression, "-d", "%Y_%m_%d_%H%M"] + urls.map(\.path)
+        let writeResult = runWriteTool(with: args)
 
-        let args: [String] = [
-            "-v",          // verbose — outputs old → new path mappings
-            "-m",          // ignore minor errors
-            expression,
-            "-d",
-            "%Y_%m_%d_%H%M"
-        ] + urls.map(\.path)
-        process.arguments = args
-
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = errPipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-
-            let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: outData, encoding: .utf8) ?? ""
-            let errorOutput = String(data: errData, encoding: .utf8) ?? ""
-            let combined = [output, errorOutput]
-                .filter { !$0.isEmpty }
-                .joined(separator: "\n")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-
-            let success = process.terminationStatus == 0
-
-            // Parse verbose output for "old_path -> new_path" lines
-            var pathMapping: [String: String] = [:]
-            if success {
-                // Regex matches: 'old_path' -> 'new_path'
-                // ExifTool verbose output uses single quotes around paths
-                let pattern = #"'([^']+)'\s*->\s*'([^']+)'"#
-                if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
-                    let nsRange = NSRange(output.startIndex..<output.endIndex, in: output)
-                    let matches = regex.matches(in: output, options: [], range: nsRange)
-                    for match in matches {
-                        if match.numberOfRanges == 3,
-                           let oldRange = Range(match.range(at: 1), in: output),
-                           let newRange = Range(match.range(at: 2), in: output) {
-                            let oldPath = String(output[oldRange])
-                            let newPath = String(output[newRange])
-                            pathMapping[oldPath] = newPath
-                        }
-                    }
-                }
-
-                // Fallback: if regex parsing found nothing but rename succeeded,
-                // try to detect new filenames by scanning the directory.
-                // This handles cases where ExifTool's output format differs.
-                if pathMapping.isEmpty && !urls.isEmpty {
-                    for originalURL in urls {
-                        let parent = originalURL.deletingLastPathComponent()
-                        if let contents = try? FileManager.default.contentsOfDirectory(at: parent,
-                            includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
-                            // Find file that isn't the original and wasn't already mapped
-                            let newURLs = contents.filter { newURL in
-                                guard newURL.lastPathComponent != originalURL.lastPathComponent else {
-                                    return false
-                                }
-                                return !pathMapping.values.contains(newURL.path)
-                            }
-                            if let newURL = newURLs.first {
-                                pathMapping[originalURL.path] = newURL.path
-                            }
-                        }
+        // Parse verbose output for "old_path -> new_path" lines
+        var pathMapping: [String: String] = [:]
+        if writeResult.success {
+            let pattern = #"'([^']+)'\s*->\s*'([^']+)'"#
+            if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
+                let nsRange = NSRange(writeResult.output.startIndex..<writeResult.output.endIndex, in: writeResult.output)
+                let matches = regex.matches(in: writeResult.output, options: [], range: nsRange)
+                for match in matches {
+                    if match.numberOfRanges == 3,
+                       let oldRange = Range(match.range(at: 1), in: writeResult.output),
+                       let newRange = Range(match.range(at: 2), in: writeResult.output) {
+                        pathMapping[String(writeResult.output[oldRange])] = String(writeResult.output[newRange])
                     }
                 }
             }
 
-            return RenameResult(success: success, output: success ? output : combined, pathMapping: pathMapping)
-        } catch {
-            return RenameResult(success: false, output: error.localizedDescription, pathMapping: [:])
+            // Fallback: if regex parsing found nothing but rename succeeded,
+            // try to detect new filenames by scanning the directory.
+            if pathMapping.isEmpty && !urls.isEmpty {
+                for originalURL in urls {
+                    let parent = originalURL.deletingLastPathComponent()
+                    if let contents = try? FileManager.default.contentsOfDirectory(at: parent,
+                        includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+                        let newURLs = contents.filter { newURL in
+                            guard newURL.lastPathComponent != originalURL.lastPathComponent else { return false }
+                            return !pathMapping.values.contains(newURL.path)
+                        }
+                        if let newURL = newURLs.first {
+                            pathMapping[originalURL.path] = newURL.path
+                        }
+                    }
+                }
+            }
         }
+
+        return RenameResult(success: writeResult.success, output: writeResult.output, pathMapping: pathMapping)
     }
 
     /// Runs a full sanitise on the given files:
@@ -510,13 +439,9 @@ enum ExifToolService {
         guard !urls.isEmpty else {
             return WriteResult(success: false, output: "No files provided.")
         }
-
         if let error = missingToolError {
             return WriteResult(success: false, output: error)
         }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: exifToolPath)
 
         let args: [String] = [
             "-overwrite_original",
@@ -529,31 +454,7 @@ enum ExifToolService {
             "-ImageDescription<Description",
             "-Caption-Abstract<Description"
         ] + urls.map(\.path)
-        process.arguments = args
-
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = errPipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-
-            let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: outData, encoding: .utf8) ?? ""
-            let errorOutput = String(data: errData, encoding: .utf8) ?? ""
-            let combined = [output, errorOutput]
-                .filter { !$0.isEmpty }
-                .joined(separator: "\n")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-
-            let success = process.terminationStatus == 0
-            return WriteResult(success: success, output: success ? output : combined)
-        } catch {
-            return WriteResult(success: false, output: error.localizedDescription)
-        }
+        return runWriteTool(with: args)
     }
 }
 
@@ -569,6 +470,8 @@ private struct ExifToolOutput: Decodable {
     }
 }
 
+/// Internal JSON output shape from ExifTool's `-json` mode.
+/// Only fields we care about are decoded; ExifTool may return many more.
 private struct FullExifToolOutput: Decodable {
     let sourceFile: String
     let dateTimeOriginal: String?

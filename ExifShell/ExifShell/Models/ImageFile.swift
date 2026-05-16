@@ -2,6 +2,27 @@ import Foundation
 import AppKit
 import Observation
 
+// ============================================================================
+// ImageFile
+// ============================================================================
+// @Observable class representing a single image file loaded into ExifShell.
+// Each instance holds the file's URL, filename, thumbnail, and all metadata
+// fields we care about. Two fields are user-editable (DateTimeOriginal,
+// Description) with automatic dirty tracking — editing either one sets
+// `isDirty = true` via `didSet`. The remaining fields are read-only display
+// values populated from ExifTool during import.
+//
+// Dirty state pattern:
+//   - `dateTimeOriginal` didSet compares against `originalDateTimeOriginal`
+//   - `description` didSet compares against `originalDescription`
+//   - `markClean()` resets both baselines after a successful save
+//
+// Types referencing this:
+//   - FileListViewModel owns the array of ImageFile instances
+//   - FileTableView binds to individual fields via `@Bindable`
+//   - PreviewPanel reads fields for diff display and read-only metadata
+// ============================================================================
+
 @Observable
 final class ImageFile: Identifiable, Hashable {
     let id = UUID()
@@ -94,7 +115,6 @@ final class ImageFile: Identifiable, Hashable {
     func updateURL(_ newURL: URL) {
         url = newURL
         filename = newURL.lastPathComponent
-        // Re-check dirty status since we may need to re-read metadata
     }
 
     // MARK: - Hashable

@@ -1,7 +1,21 @@
 import SwiftUI
 
-/// Visual drop zone shown when no files are loaded.
-/// Drop handling is owned by ContentView.
+// ============================================================================
+// DropZoneView
+// ============================================================================
+// Visual drop zone shown when no files are loaded.
+// Purely a visual component — all drag-and-drop handling is owned by
+// ContentView via .onDrop(of:isTargeted:perform:).
+//
+// Shows:
+//   - Tray icon and instructional text
+//   - Supported format list
+//   - Loading spinner if metadata import is in progress
+//
+// Inputs:
+//   - viewModel (reads isLoading to show/hide progress indicator)
+// ============================================================================
+
 struct DropZoneView: View {
     let viewModel: FileListViewModel
 

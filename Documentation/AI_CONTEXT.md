@@ -13,13 +13,13 @@ ExifShell is a native macOS app (SwiftUI) that lets users drag-and-drop images, 
 | File | Purpose |
 |---|---|
 | `Sources/ExifShellApp.swift` | `@main` entry point. Sets activation policy, brings app to front, sets default window size (1100×680). |
-| `Sources/ContentView.swift` | Root view. Shows `DropZoneView` when empty, or `HSplitView` (table + preview) when files loaded. Owns all drop handling, two bulk edit bars (date & description), status bar, and app-wide keyboard shortcuts (⌘K, ⌘S). |
-| `Sources/Models/ImageFile.swift` | `@Observable` class: `url`, `filename`, `dateTimeOriginal`, `description` (both editable with dirty tracking), read-only `createDate`, `modifyDate`, `imageDescription`, `captionAbstract`, `thumbnail`. |
-| `Sources/ViewModels/FileListViewModel.swift` | `@Observable` class: all state (`files[]`, `selectedFile`, `selectedFiles[]`, `bulkEditValue`), import (batch full metadata read), select, save (saves date + description independently), clear, bulk edit (date & description). |
-| `Sources/Services/ExifToolService.swift` | Static methods to read/write ExifTool metadata. Shells out via `Process`. Auto-resolves exiftool path. Supports batch full reads (`readAllMetadata` returns `[URL: FileMetadata]`), batch date writes, batch description writes, and `sanitise()` which runs the full sanitise pipeline (normalise dates, propagate, clear offsets, sync descriptions). |
+| `Sources/ContentView.swift` | Root view. Shows `DropZoneView` when empty, or `HSplitView` (table + preview) when files loaded. Owns all drop handling, two bulk edit bars (date & description), status bar, app-wide keyboard shortcuts (⌘K, ⌘S, ⌫ Delete), and loading overlay. |
+| `Sources/Models/ImageFile.swift` | `@Observable` class: `url`, `filename`, `dateTimeOriginal`, `description` (both editable with dirty tracking), read-only `createDate`, `modifyDate`, `imageDescription`, `captionAbstract`, `subject`, `keywords`, `lastKeywordXMP`, `thumbnail`. |
+| `Sources/ViewModels/FileListViewModel.swift` | `@Observable` class: all state (`files[]`, `selectedFile`, `selectedFiles[]`, `bulkEditValue`), import (batch full metadata read), select, save (saves date + description independently via extracted `saveDateGroups`/`saveDescriptionGroups`), clear, bulk edit (date & description), sanitise, rename. |
+| `Sources/Services/ExifToolService.swift` | Static methods to read/write ExifTool metadata. All Process boilerplate centralised into `runExifTool(with:)` helper. Auto-resolves exiftool path. Supports batch full reads (`readAllMetadata` returns `[URL: FileMetadata]`), batch date writes, batch description writes, `sanitise()`, and `renameFiles()`. |
 | `Sources/Views/DropZoneView.swift` | Visual drop zone (drop handling in ContentView). |
-| `Sources/Views/FileTableView.swift` | SwiftUI `List` with multi-select (`Set<ImageFile.ID>`), editable date + description columns, orange text when dirty. |
-| `Sources/Views/PreviewPanel.swift` | Thumbnail + diff review (date & description) + read-only metadata display + Save button + Sanitise All button. |
+| `Sources/Views/FileTableView.swift` | SwiftUI `List` with multi-select (`Set<ImageFile.ID>`), editable date + description columns, orange text when dirty, sortable headers. |
+| `Sources/Views/PreviewPanel.swift` | Thumbnail + diff review (date & description) + read-only metadata display + Save / Sanitise All / Rename All buttons. |
 
 ---
 

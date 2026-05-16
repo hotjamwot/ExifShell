@@ -1,5 +1,28 @@
 import SwiftUI
 
+// ============================================================================
+// FileTableView
+// ============================================================================
+// The editable file list shown in the left pane of the HSplitView.
+// Uses a SwiftUI List (not Table) for reliable @Observable bindings and
+// multi-select support via Set<ImageFile.ID> (⌘+click).
+//
+// Columns:
+//   - Filename (sortable, clickable header)
+//   - DateTimeOriginal (editable TextField, monospaced, orange when dirty)
+//   - Description (editable TextField, monospaced, orange when dirty)
+//
+// Selection syncs to:
+//   - viewModel.selectedFile (first selected → preview panel)
+//   - viewModel.selectedFiles (all selected → bulk edit bars)
+//
+// Inputs:
+//   - viewModel (reads sortedFiles, sortKey/sortAscending, calls toggleSort)
+//
+// Sub-views:
+//   - TableRowView (private): one row with three columns + dirty styling
+// ============================================================================
+
 struct FileTableView: View {
     let viewModel: FileListViewModel
     @State private var selectedIDs: Set<ImageFile.ID> = []
@@ -73,6 +96,7 @@ struct FileTableView: View {
                 }
             }
             .listStyle(.bordered(alternatesRowBackgrounds: true))
+            .listRowInsets(.init())   // remove default List row insets
             .onChange(of: selectedIDs) { _, newValue in
                 // Update single selection for the preview panel (first selected)
                 if let firstID = newValue.first {
@@ -123,5 +147,6 @@ private struct TableRowView: View {
                 .help("Description — written to Description, ImageDescription & Caption-Abstract on save")
         }
         .padding(.vertical, 2)
+        .padding(.horizontal, 8)
     }
 }

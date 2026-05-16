@@ -1,5 +1,31 @@
 import SwiftUI
 
+// ============================================================================
+// PreviewPanel
+// ============================================================================
+// The right pane of the HSplitView, showing a detailed view of the
+// currently selected file. Provides diff review, read-only metadata
+// display, and action buttons.
+//
+// Layout (ScrollView):
+//   1. Header: filename + multi-select info
+//   2. Thumbnail (or placeholder icon)
+//   3. Editable fields section with diff display
+//      - DateTimeOriginal: grey strikethrough (original) → green bold (current)
+//      - Description: grey strikethrough (original) → green bold (current)
+//   4. Read-only metadata section (CreateDate, ModifyDate, etc.)
+//   5. Save feedback badges (when applicable)
+//   6. Action buttons: Save, Sanitise All, Rename All
+//   7. Status message
+//
+// Inputs:
+//   - viewModel (reads selectedFile, selectedFiles, lastSaveFeedback, etc.)
+//
+// Actions:
+//   - saveAll() / sanitiseAll() / renameAll() on viewModel
+//   - copyCreateDate/ModifyDate to DateTimeOriginal for selected files
+// ============================================================================
+
 struct PreviewPanel: View {
     let viewModel: FileListViewModel
 
@@ -20,7 +46,7 @@ struct PreviewPanel: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                            Text("Copy actions will use each selected file’s own source date.")
+                            Text("Copy actions will use each selected file's own source date.")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
