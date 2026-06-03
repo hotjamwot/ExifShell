@@ -59,7 +59,7 @@ struct ContentView: View {
                             .frame(minWidth: 420)
 
                         // Status bar
-                        if viewModel.statusMessage != nil || viewModel.operationMessage != nil || viewModel.isLoading || viewModel.isSaving || viewModel.isSanitising || viewModel.isRenaming {
+                        if viewModel.statusMessage != nil || viewModel.operationMessage != nil || viewModel.isLoading || viewModel.isSaving || viewModel.isRenaming {
                             HStack(spacing: 8) {
                                 VStack(alignment: .leading, spacing: 2) {
                                     if let message = viewModel.operationMessage {

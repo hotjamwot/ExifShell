@@ -15,19 +15,26 @@ import SwiftUI
 //      - Description: grey strikethrough (original) → green bold (current)
 //   4. Read-only metadata section (CreateDate, ModifyDate, etc.)
 //   5. Save feedback badges (when applicable)
-//   6. Action buttons: Save, Sanitise All, Rename All
+//   6. Action buttons: Save, Rename All
 //   7. Status message
+//
+// Note: The old "Sanitise All" button has been removed because Save now
+// incorporates sanitise behaviour (writing DateTimeOriginal also writes
+// CreateDate, ModifyDate, and clears offset tags).
 //
 // Inputs:
 //   - viewModel (reads selectedFile, selectedFiles, lastSaveFeedback, etc.)
 //
 // Actions:
-//   - saveAll() / sanitiseAll() / renameAll() on viewModel
+//   - saveAll() / renameAll() on viewModel
 //   - copyCreateDate/ModifyDate to DateTimeOriginal for selected files
 // ============================================================================
 
 struct PreviewPanel: View {
     let viewModel: FileListViewModel
+
+    /// Tracks whether the save icon should animate.
+    @State private var isSaveAnimating = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -52,6 +59,26 @@ struct PreviewPanel: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
 
+                        // Video-specific metadata badge
+                        if file.mediaType == .video {
+                            HStack(spacing: 8) {
+                                Label("Video", systemImage: "film")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                if let duration = file.duration, !duration.isEmpty {
+                                    Label(duration, systemImage: "clock")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                if let resolution = file.resolution, !resolution.isEmpty {
+                                    Label(resolution, systemImage: "rectangle")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
                         // Thumbnail
                         if let image = file.thumbnail {
                             Image(nsImage: image)
@@ -59,6 +86,21 @@ struct PreviewPanel: View {
                                 .aspectRatio(contentMode: .fit)
                                 .frame(maxHeight: 240)
                                 .cornerRadius(6)
+                        } else if file.mediaType == .video {
+                            // Video with no thumbnail fallback
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.gray.opacity(0.15))
+                                .frame(height: 160)
+                                .overlay(
+                                    VStack(spacing: 8) {
+                                        Image(systemName: "film")
+                                            .font(.system(size: 36))
+                                            .foregroundColor(.secondary)
+                                        Text("Video")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                )
                         } else {
                             RoundedRectangle(cornerRadius: 6)
                                 .fill(Color.gray.opacity(0.15))
@@ -174,7 +216,11 @@ struct PreviewPanel: View {
                             viewModel.saveAll()
                         } label: {
                             HStack(spacing: 6) {
-                                Image(systemName: "square.and.arrow.down")
+                                Image(systemName: viewModel.isSaving
+                                    ? "square.and.arrow.down.on.square"
+                                    : (viewModel.dirtyCount > 0 ? "square.and.arrow.down.badge.clock" : "square.and.arrow.down"))
+                                    .symbolEffect(.bounce, value: isSaveAnimating)
+                                    .symbolEffect(.pulse, isActive: viewModel.isSaving)
                                 Text(viewModel.dirtyCount > 0
                                      ? "Save Changes (\(viewModel.dirtyCount))"
                                      : "Save Changes")
@@ -182,29 +228,8 @@ struct PreviewPanel: View {
                             .frame(maxWidth: .infinity)
                         }
                         .keyboardShortcut("s", modifiers: .command)
-                        .disabled(viewModel.dirtyCount == 0)
+                        .disabled(viewModel.dirtyCount == 0 || viewModel.isSaving)
                         .buttonStyle(.borderedProminent)
-                        .controlSize(.regular)
-
-                        // Sanitise button
-                        Button {
-                            viewModel.sanitiseAll()
-                        } label: {
-                            HStack(spacing: 6) {
-                                if viewModel.isSanitising {
-                                    ProgressView()
-                                        .scaleEffect(0.7)
-                                        .controlSize(.small)
-                                }
-                                Image(systemName: "wand.and.stars")
-                                Text(viewModel.isSanitising
-                                     ? "Sanitising..."
-                                     : "Sanitise All")
-                            }
-                            .frame(maxWidth: .infinity)
-                        }
-                        .disabled(viewModel.isSanitising)
-                        .buttonStyle(.bordered)
                         .controlSize(.regular)
 
                         // Rename button
@@ -217,7 +242,11 @@ struct PreviewPanel: View {
                                         .scaleEffect(0.7)
                                         .controlSize(.small)
                                 }
-                                Image(systemName: "pencil.and.list.clipboard")
+                                Image(systemName: viewModel.isRenaming
+                                    ? "pencil.and.list.clipboard"
+                                    : "pencil.and.list.clipboard")
+                                    .symbolEffect(.bounce, value: viewModel.isRenaming)
+                                    .symbolEffect(.pulse, isActive: viewModel.isRenaming)
                                 Text(viewModel.isRenaming
                                      ? "Renaming..."
                                      : "Rename All")
@@ -248,7 +277,8 @@ struct PreviewPanel: View {
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
                     if viewModel.dirtyCount > 0 {
-                        Text("\(viewModel.dirtyCount) file(s) with unsaved changes")
+                        Label("\(viewModel.dirtyCount) file(s) with unsaved changes",
+                              systemImage: "square.and.arrow.down.badge.clock")
                             .font(.caption)
                             .foregroundColor(.orange)
                     }
@@ -258,6 +288,15 @@ struct PreviewPanel: View {
             }
         }
         .frame(minWidth: 280)
+        .onChange(of: viewModel.isSaving) { oldVal, newVal in
+            if newVal {
+                isSaveAnimating = true
+                // Reset after a short delay so it can trigger again next time
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    isSaveAnimating = false
+                }
+            }
+        }
     }
 
     // MARK: - Field Views
@@ -310,13 +349,14 @@ struct PreviewPanel: View {
         }
     }
 
-    /// Save feedback badge.
+    /// Save feedback badge with animated checkmark.
     @ViewBuilder
     private func saveFeedbackRow(label: String, feedback: FileListViewModel.SaveFeedback) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundColor(.green)
                 .font(.caption)
+                .symbolEffect(.bounce, options: .repeating)
             Text("\(label): \(feedback.from) → \(feedback.to)")
                 .font(.system(.caption, design: .monospaced))
                 .foregroundColor(.green)

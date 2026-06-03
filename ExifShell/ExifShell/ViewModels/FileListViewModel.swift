@@ -9,13 +9,15 @@ import UniformTypeIdentifiers
 //   - files: [ImageFile] — the source-of-truth file list
 //   - selectedFile / selectedFiles — single-selection for preview, multi-selection for bulk edit
 //   - bulkEditValue / bulkEditMode — state backing the bulk edit UI in ContentView
-//   - isLoading / isSaving / isSanitising / isRenaming — operation progress flags
+//   - isLoading / isSaving / isRenaming — operation progress flags
 //
 // Key methods:
 //   - importFiles(_:) / importFolder(_:) — validates, deduplicates, batch-reads metadata
-//   - saveAll() — groups dirty files by value for efficient ExifTool batch writes
-//   - sanitiseAll() — full sanitise pipeline (normalise dates, clear offsets, sync descriptions)
-//   - renameAll() — renames files to {DateTimeOriginal}_{###}_{Description}.{ext}
+//   - saveAll() — groups dirty files by value for efficient ExifTool batch writes.
+//     Save now incorporates sanitise: writing DateTimeOriginal also writes
+//     CreateDate, ModifyDate, and clears offset tags (images). There is no
+//     separate sanitise step.
+//   - renameAll() — renames files to {CreateDate}_{###}_{Description}.{ext}
 //   - applyBulkEdit() / applyBulkEditDescription() — bulk set values on selected files
 //   - copyCreateDateToDateTimeOriginalSelection() / copyModifyDate...() — copy source dates
 //   - removeSelected() / clearAll() — list management
@@ -35,7 +37,7 @@ import UniformTypeIdentifiers
 // Types consuming this:
 //   - ContentView (root view, imports calls importFiles/importFolder)
 //   - FileTableView (reads sortedFiles, selectedFiles)
-//   - PreviewPanel (reads selectedFile, calls saveAll/sanitiseAll/renameAll)
+//   - PreviewPanel (reads selectedFile, calls saveAll/renameAll)
 //   - DropZoneView (reads isLoading)
 // ============================================================================
 
@@ -177,17 +179,17 @@ class FileListViewModel {
     // MARK: - Import
 
     func importFiles(_ urls: [URL]) {
-        let imageURLs = urls.filter { isImageFile($0) }
-        guard !imageURLs.isEmpty else {
-            statusMessage = "No image files found in drop."
+        let supportedURLs = urls.filter { isSupportedFile($0) }
+        guard !supportedURLs.isEmpty else {
+            statusMessage = "No supported files found in drop."
             return
         }
 
         let existingURLs = Set(files.map(\.url))
-        let newURLs = imageURLs.filter { !existingURLs.contains($0) }
-        let reloadURLs = Array(Set(imageURLs.filter { existingURLs.contains($0) }))
+        let newURLs = supportedURLs.filter { !existingURLs.contains($0) }
+        let reloadURLs = Array(Set(supportedURLs.filter { existingURLs.contains($0) }))
         guard !newURLs.isEmpty || !reloadURLs.isEmpty else {
-            statusMessage = "No image files found in drop."
+            statusMessage = "No supported files found in drop."
             return
         }
 
@@ -198,6 +200,7 @@ class FileListViewModel {
         let placeholders = newURLs.map { url in
             ImageFile(
                 url: url,
+                mediaType: Self.mediaType(for: url),
                 dateTimeOriginal: "",
                 description: "",
                 createDate: nil,
@@ -247,7 +250,7 @@ class FileListViewModel {
         )
         var urls: [URL] = []
         while let fileURL = enumerator?.nextObject() as? URL {
-            if isImageFile(fileURL) { urls.append(fileURL) }
+            if isSupportedFile(fileURL) { urls.append(fileURL) }
         }
         importFiles(urls)
     }
@@ -288,6 +291,10 @@ class FileListViewModel {
                 file.subject = m.subject
                 file.keywords = m.keywords
                 file.lastKeywordXMP = m.lastKeywordXMP
+                file.duration = m.duration
+                if let w = m.imageWidth, let h = m.imageHeight {
+                    file.resolution = "\(w)×\(h)"
+                }
             }
             file.markClean()
         }
@@ -307,7 +314,6 @@ class FileListViewModel {
         selectedFile = nil
         selectedFiles = []
         lastSaveFeedback = nil
-        lastDescriptionSaveFeedback = nil
         statusMessage = "Removed \(idsToRemove.count) file(s)."
         // files.didSet handles invalidation
     }
@@ -318,7 +324,6 @@ class FileListViewModel {
         selectedFile = nil
         selectedFiles = []
         lastSaveFeedback = nil
-        lastDescriptionSaveFeedback = nil
         statusMessage = nil
         bulkEditValue = ""
         // files.didSet handles invalidation
@@ -333,7 +338,6 @@ class FileListViewModel {
     /// Clears transient save feedback when navigating away or re-selecting.
     private func clearFeedback() {
         lastSaveFeedback = nil
-        lastDescriptionSaveFeedback = nil
         statusMessage = nil
         operationMessage = nil
         operationProgress = nil
@@ -511,6 +515,12 @@ class FileListViewModel {
 
     /// Saves all dirty files in batch — groups by distinct field values
     /// so that files with the same edits are written together.
+    ///
+    /// Save has been merged with the old sanitise behaviour:
+    /// - For images: writes DateTimeOriginal, CreateDate, ModifyDate, clears offsets
+    /// - For videos: writes QuickTime:CreationDate, CreateDate, ModifyDate
+    /// - Description writes to Description + ImageDescription/Caption-Abstract (images)
+    ///   or Description (videos)
     func saveAll() {
         Task { await saveAllAsync() }
     }
@@ -695,98 +705,17 @@ class FileListViewModel {
         return formatter
     }()
 
-    // MARK: - Sanitise
-
-    /// Whether sanitise is currently running.
-    var isSanitising = false
+    // MARK: - Rename
 
     /// Whether rename is currently running.
     var isRenaming = false
 
-    /// Runs the full sanitise pipeline on all loaded files:
-    ///   - Normalises DateTimeOriginal format
-    ///   - Copies DateTimeOriginal → CreateDate, ModifyDate
-    ///   - Clears OffsetTime, OffsetTimeOriginal, OffsetTimeDigitized
-    ///   - Copies Description → ImageDescription, Caption-Abstract
-    ///
-    /// Processed in batches of `metadataBatchSize` so the user sees live
-    /// determinate progress and ExifTool isn't overwhelmed with a single
-    /// massive command that appears to hang.
-    func sanitiseAll() {
-        Task { await sanitiseAllAsync() }
-    }
-
-    private func sanitiseAllAsync() async {
-        guard !files.isEmpty else {
-            statusMessage = "No files to sanitise."
-            return
-        }
-
-        guard !isSanitising else { return }
-
-        isSanitising = true
-        beginOperation(message: "Sanitising \(files.count) file(s)...", determinate: true)
-
-        // Save any unsaved changes first so we sanitise the latest values
-        if dirtyCount > 0 {
-            let saveSucceeded = await saveAllAsync()
-            if !saveSucceeded {
-                isSanitising = false
-                endOperation(successMessage: statusMessage)
-                return
-            }
-        }
-
-        let allURLs = files.map(\.url)
-        let chunks = stride(from: 0, to: allURLs.count, by: metadataBatchSize).map { start in
-            Array(allURLs[start..<min(start + metadataBatchSize, allURLs.count)])
-        }
-        let totalChunks = chunks.count
-
-        var allSucceeded = true
-        var lastError: String?
-        var processedUpTo = 0
-
-        for (index, chunk) in chunks.enumerated() {
-            processedUpTo = min((index + 1) * metadataBatchSize, allURLs.count)
-            updateOperation(
-                progress: Double(index) / Double(totalChunks),
-                message: "Sanitising (\(processedUpTo)/\(allURLs.count))..."
-            )
-
-            let result = await runBackground { ExifToolService.sanitise(chunk) }
-            guard result.success else {
-                allSucceeded = false
-                lastError = result.output
-                break
-            }
-        }
-
-        // Always re-read metadata after sanitise so the in-memory state
-        // reflects the cleaned EXIF data, even if the operation partially failed.
-        let reReadMessage = allSucceeded
-            ? "Reloading metadata..."
-            : "Reloading metadata after partial failure..."
-        updateOperation(
-            progress: Double(processedUpTo) / Double(allURLs.count),
-            message: reReadMessage
-        )
-        let metadata = await loadMetadata(for: allURLs)
-        applyMetadata(metadata, to: files)
-
-        if allSucceeded {
-            endOperation(successMessage: "✅ Sanitised \(allURLs.count) file(s).")
-        } else {
-            endOperation(successMessage: "❌ Sanitise failed after \(processedUpTo) file(s): \(lastError ?? "unknown error")")
-        }
-
-        isSanitising = false
-    }
-
-    // MARK: - Rename
-
     /// Runs the rename pipeline on all loaded files.
-    /// Renames files to: `{DateTimeOriginal}_{###}_{Description}.{ext}`
+    /// Renames files to: `{CreateDate}_{###}_{Description}.{ext}`
+    ///
+    /// Uses CreateDate instead of DateTimeOriginal for the rename pattern
+    /// because CreateDate is available on both images and videos, and is
+    /// always synced by Save.
     ///
     /// Processed in batches of `metadataBatchSize` so the user sees live
     /// determinate progress and ExifTool isn't overwhelmed with a single
@@ -861,7 +790,7 @@ class FileListViewModel {
         isRenaming = false
     }
 
-    // MARK: - Dedup
+    // MARK: - File Type Detection
 
     private let imageExtensions: Set<String> = [
         "jpg", "jpeg", "png", "tiff", "tif", "gif", "bmp", "heic", "heif",
@@ -869,7 +798,23 @@ class FileListViewModel {
         "webp", "ico", "psd"
     ]
 
-    private func isImageFile(_ url: URL) -> Bool {
-        imageExtensions.contains(url.pathExtension.lowercased())
+    private static let videoExtensions: Set<String> = [
+        "mp4", "mov", "m4v", "avi", "mkv", "wmv", "flv", "webm",
+        "ts", "mts", "m2ts", "3gp", "3g2", "ogv", "mxf"
+    ]
+
+    /// Returns the MediaType for a given URL based on its extension.
+    static func mediaType(for url: URL) -> MediaType {
+        let ext = url.pathExtension.lowercased()
+        if videoExtensions.contains(ext) {
+            return .video
+        }
+        return .image
+    }
+
+    /// Returns true if the file extension is a supported image or video type.
+    private func isSupportedFile(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        return imageExtensions.contains(ext) || Self.videoExtensions.contains(ext)
     }
 }

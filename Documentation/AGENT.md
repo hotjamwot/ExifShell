@@ -1,0 +1,212 @@
+# AI Context — ExifShell
+
+This file is designed to give an AI assistant (or a future developer) the minimum context needed to understand and modify ExifShell safely and correctly.
+
+## Project Summary
+
+ExifShell is a native macOS app (SwiftUI) that lets users drag-and-drop images **and videos**, view/edit `DateTimeOriginal` and `Description` metadata, and apply changes via ExifTool. It follows MVVM with a single service layer for shell commands.
+
+Media support:
+- **Images**: JPEG, PNG, HEIC, RAW (CR2, CR3, NEF, ARW, DNG, ORF, RW2, SR2), TIFF, GIF, BMP, WebP, ICO, PSD
+- **Videos**: MP4, MOV, M4V, AVI, MKV, WMV, FLV, WebM, TS, MTS, M2TS, 3GP, 3G2, OGV, MXF
+
+For images, `DateTimeOriginal` maps to `EXIF:DateTimeOriginal`; for videos, it maps to `QuickTime:CreationDate`. Description works on both, but videos only write to the `Description` tag (not `ImageDescription`/`Caption-Abstract`, which are EXIF/IPTC only).
+
+---
+
+## File Map
+
+| File | Purpose |
+|---|---|
+| `Sources/ExifShellApp.swift` | `@main` entry point. Sets activation policy, brings app to front, sets default window size (1100×680). |
+| `Sources/ContentView.swift` | Root view. Shows `DropZoneView` when empty, or `HSplitView` (table + preview) when files loaded. Owns all drop handling, two bulk edit bars (date & description), status bar, app-wide keyboard shortcuts (⌘K, ⌘S, ⌫ Delete), and loading overlay. |
+| `Sources/Models/ImageFile.swift` | `@Observable` class: `url`, `filename`, `mediaType` (`.image` / `.video`), `dateTimeOriginal`, `description` (both editable with dirty tracking), read-only `createDate`, `modifyDate`, `imageDescription`, `captionAbstract`, `subject`, `keywords`, `lastKeywordXMP`, `thumbnail`, `duration`, `resolution`. Generates thumbnails for videos via AVAssetImageGenerator. |
+| `Sources/ViewModels/FileListViewModel.swift` | `@Observable` class: all state (`files[]`, `selectedFile`, `selectedFiles[]`, `bulkEditValue`), import (batch full metadata read), select, save (saves date + description independently, handles image/video tag differences), clear, bulk edit (date & description), sanitise, rename. Extended to support both `isImageFile` and `isSupportedFile` with `mediaType(for:)`. |
+| `Sources/Services/ExifToolService.swift` | Static methods to read/write ExifTool metadata. All Process boilerplate centralised into `runExifTool(with:)` helper. Supports batch full reads (`readAllMetadata` returns `[URL: FileMetadata]`), batch date writes (splits images/videos by extension), batch description writes (videos get `-Description=` only), `sanitise()` (image-specific or video-specific pipelines), and `renameFiles()`. |
+| `Sources/Views/DropZoneView.swift` | Visual drop zone (drop handling in ContentView). |
+| `Sources/Views/FileTableView.swift` | SwiftUI `List` with multi-select (`Set<ImageFile.ID>`), editable date + description columns, orange text when dirty, sortable headers. |
+| `Sources/Views/PreviewPanel.swift` | Thumbnail + diff review (date & description) + read-only metadata display + Save / Sanitise All / Rename All buttons. Shows video badges (media type badge, duration, resolution) for `.video` files. |
+
+---
+
+## Conventions
+
+### Adding a new metadata field (e.g. `Description`)
+
+1. **`ImageFile.swift`**: Add a new `var description: String` property and include it in the dirty comparison logic.
+2. **`ExifToolService.swift`**: Add `readDescription(from:)` and `writeDescription(_:to:)` methods. The read method should accept `[URL]` for batch support. The write method already accepts `[URL]` — just add the new tag. For video support, use `splitByMediaType` to handle different tags per file type.
+3. **`FileListViewModel.swift`**: Update `importFiles(_:)` to call the new batch read method. Update `saveAll()` to include the new field in the write call.
+4. **`FileTableView.swift`**: Add a new column/row element for the field with a `@Bindable` binding.
+5. **`PreviewPanel.swift`**: Add a new diff section for the field.
+
+### Adding a new view
+- Create file in `Sources/Views/`.
+- Pass `FileListViewModel` as `let` (not `@ObservedObject` — using `@Observable`).
+- Add it to `ContentView.swift` or nest inside an existing view.
+
+### Adding a new media type
+1. Add extensions to `ImageFile.swift`'s `videoExtensions` set (or create a new set in `ExifToolService`).
+2. Update `FileListViewModel.mediaType(for:)` and `isSupportedFile(_:)`.
+3. For write operations, add the file type to `ExifToolService.videoExtensions` so `splitByMediaType` handles it.
+4. For read operations, the `readAllMetadata` args are universal (ExifTool reads all requested tags regardless of file type).
+5. For sanitise, add a branch in `ExifToolService.sanitise(_:)` for the new media type.
+
+### ExifTool call pattern
+Always support batch reads and writes:
+
+```swift
+// BATCH READ — single process call for all URLs
+static func readDescription(from urls: [URL]) -> [URL: String?] {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: exifToolPath)
+    process.arguments = ["-json", "-Description"] + urls.map(\.path)
+    // capture stdout, decode JSON, return dictionary
+}
+
+// BATCH WRITE — single process call for all URLs with same value
+static func writeDescription(_ value: String, to urls: [URL]) -> WriteResult {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: exifToolPath)
+    var args = ["-overwrite_original", "-Description=\(value)", "-ImageDescription=\(value)", "-Caption-Abstract=\(value)"]
+    args.append(contentsOf: urls.map(\.path))
+    process.arguments = args
+    // capture stdout+stderr, run, return WriteResult
+}
+```
+
+**Key patterns:**
+- **For writes:** Always accept `[URL]` (batch). Single file is just `[url]`.
+- **For reads:** Accept `[URL]`, return `[URL: String?]` dictionary (or `[URL: FileMetadata]` for full reads).
+- **Path:** Use the static `exifToolPath` property, **not** `/usr/bin/env` (which breaks in Xcode).
+- **Tag group:** Always use explicit group specifiers like `-EXIF:DateTimeOriginal=` for images, `-QuickTime:CreationDate=` for videos.
+- **Mixed batches:** Use `splitByMediaType(_:)` to separate images from videos before write/sanitise operations.
+
+---
+
+## ExifTool Commands Used
+
+| Operation | Command |
+|---|---|
+| Read (full batch) | `exiftool -json -DateTimeOriginal -CreateDate -ModifyDate -Description -ImageDescription -Caption-Abstract -Subject -Keywords -LastKeywordXMP -Duration -ImageWidth -ImageHeight <files...>` |
+| Read (date only) | `exiftool -json -DateTimeOriginal <files...>` |
+| Write (date batch, images) | `exiftool -overwrite_original -EXIF:DateTimeOriginal="<value>" <files...>` |
+| Write (date batch, videos) | `exiftool -overwrite_original -QuickTime:CreationDate="<value>" <files...>` |
+| Write (desc batch, images) | `exiftool -overwrite_original -Description="<value>" -ImageDescription="<value>" -Caption-Abstract="<value>" <files...>` |
+| Write (desc batch, videos) | `exiftool -overwrite_original -Description="<value>" <files...>` |
+| Sanitise (images) | `exiftool -overwrite_original '-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}' '-CreateDate<DateTimeOriginal' '-ModifyDate<DateTimeOriginal' -OffsetTime= -OffsetTimeOriginal= -OffsetTimeDigitized= '-ImageDescription<Description' '-Caption-Abstract<Description' <files...>` |
+| Sanitise (videos) | `exiftool -overwrite_original '-QuickTime:CreationDate<${QuickTime:CreationDate;DateFmt("%Y:%m:%d %H:%M:%S")}' '-CreateDate<QuickTime:CreationDate' '-ModifyDate<QuickTime:CreationDate' '-Description<Description' <files...>` |
+
+---
+
+## Key Architecture Points
+
+### @Observable (not ObservableObject)
+All models and the view model use the `@Observable` macro (macOS 14+). This means:
+- Views use `let viewModel: FileListViewModel` not `@ObservedObject`
+- Bindings use `@Bindable var bindableFile = file` then `$bindableFile.dateTimeOriginal` / `$bindableFile.description`
+- No need for `@Published` or `objectWillChange`
+
+### ExifTool Path Resolution
+The static property `exifToolPath` is resolved once at startup by checking:
+1. `/opt/homebrew/bin/exiftool` (Apple Silicon Homebrew)
+2. `/usr/local/bin/exiftool` (Intel Homebrew)
+3. `/usr/bin/exiftool`
+4. `/opt/local/bin/exiftool` (MacPorts)
+5. `which exiftool` fallback
+
+If not found, `missingToolError` returns a descriptive message and all read/write operations return nil/failure.
+
+### Full Metadata Batch Read
+`ExifToolService.readAllMetadata(from:)` processes all files in a single process invocation, reading 13 tags at once. This is used for initial import. Includes video-specific fields: Duration, ImageWidth, ImageHeight.
+
+### Media Type Detection
+Media type is determined from file extension:
+- `FileListViewModel.mediaType(for:)` returns `.image` or `.video`
+- `ExifToolService.splitByMediaType(_:)` splits URLs for tag-specific write/sanitise operations
+- Videos get `QuickTime:CreationDate` for date writes and sanitise, images get `EXIF:DateTimeOriginal`
+
+### Multi-Select & Bulk Edit
+- `FileTableView` uses `Set<ImageFile.ID>` for selection.
+- `FileListViewModel.selectedFiles` tracks multi-selection.
+- `ContentView` shows two bulk edit bars when `selectedFiles.count > 1`:
+  - Date bar (accent-tinted) — sets DateTimeOriginal on all selected files.
+  - Description bar (green-tinted) — sets Description on all selected files.
+
+### Delete / Remove Selected Files
+- `FileListViewModel.removeSelected()` removes all files whose IDs are in `selectedFiles`.
+- `ContentView` has a hidden button bound to `⌫ Delete` keyboard shortcut (no modifier).
+- This is distinct from `⌘K` (clear all) — delete only removes selected files.
+
+### Sanitise Pipeline
+- `ExifToolService.sanitise(_ urls:)` runs the full sanitise in one ExifTool invocation per media type:
+  - **Images**: Normalises DateTimeOriginal format via `DateFmt`, propagates to CreateDate/ModifyDate, clears OffsetTime* tags, syncs Description to ImageDescription/Caption-Abstract
+  - **Videos**: Normalises QuickTime:CreationDate via `DateFmt`, propagates to CreateDate/ModifyDate, syncs Description (no offset tags)
+- `FileListViewModel.sanitiseAll()` first saves any dirty files, then processes files in **batches of 80** with live determinate progress (`"Sanitising (X/Y)..."`), then re-reads all metadata from disk to refresh the display.
+
+### Rename Pipeline
+- `ExifToolService.renameFiles(_ urls:)` renames files to `{DateTimeOriginal}_{###}_{Description}.{ext}` in one ExifTool invocation using `-FileName<` expressions. Works for both images and videos.
+- `FileListViewModel.renameAll()` first saves any dirty files, then processes files in **batches of 80** with live determinate progress (`"Renaming (X/Y)..."`), and updates the in-memory URL for each renamed file from the path mapping returned by ExifTool.
+
+### Video Thumbnails
+- `ImageFile.generateThumbnail(for:mediaType:)` extracts the first frame using `AVAssetImageGenerator` for videos.
+- If frame extraction fails, `thumbnail` is `nil` and `PreviewPanel` shows a `film` icon with "Video" text.
+- Duration is parsed from ExifTool's `-Duration` output (handles both string "0:02:30" and numeric seconds).
+
+### Keyboard Shortcuts
+- **⌘S** (app-wide via hidden button in ContentView) — saves all dirty files.
+- **⌘K** (app-wide via hidden button in ContentView) — clears all files, returns to drop zone.
+- **⌫ Delete** (app-wide via hidden button in ContentView) — removes selected files.
+- **⌘+click** — toggle multi-select in the file table.
+- **Return** in the bulk edit text field — apply bulk edit value.
+
+### Dirty State
+- `ImageFile.isDirty` set automatically in `didSet` of `dateTimeOriginal` and `description`
+- `markClean()` resets both baselines after successful save
+- Table shows orange text for dirty files
+- Preview shows grey old → green proposed diff for both date and description
+
+### Save Logic (Single Button)
+- One "Save Changes (N)" button in PreviewPanel + app-wide ⌘S shortcut
+- Independently groups date-changed files by value and desc-changed files by value for batch writes
+- Tracks separate save feedback for date and description
+- Feedback clears on navigation via `selectedFile.didSet`
+
+---
+
+## Common Edit Scenarios
+
+### "Fix write targeting a different field"
+Edit `ExifToolService.swift` — make sure the tag argument uses an explicit group specifier like `-EXIF:DateTimeOriginal=` for images or `-QuickTime:CreationDate=` for videos, not just `-DateTimeOriginal=`.
+
+### "Change the orange dirty indicator colour"
+Edit `FileTableView.swift` — change `.foregroundColor(isDirty ? .orange : .primary)`.
+
+### "Add a new action button"
+- Add a `Button` in `PreviewPanel.swift` or `ContentView.swift`.
+- Wire it to a new method in `FileListViewModel.swift`.
+- Optionally add a keyboard shortcut using `.keyboardShortcut(...)`.
+
+### "Make the table sortable"
+- Change `selectedIDs` to a `SortDescriptor`-based binding in `FileTableView.swift`.
+- Sort the `files` array in the ViewModel based on sort keys.
+
+### "Add a progress indicator for large imports"
+- `FileListViewModel` already has `var isLoading`.
+- Show a `ProgressView` in `ContentView.swift` (status bar already exists).
+
+### "Add a new video format"
+1. Add the extension to both `FileListViewModel.videoExtensions` and `ExifToolService.videoExtensions`.
+2. That's it — `splitByMediaType` and `mediaType(for:)` will handle it automatically.
+
+### "Fix empty fields when running from Xcode"
+This is fixed — `ExifToolService.exifToolPath` auto-resolves the binary path. No `/usr/bin/env` or PATH dependency.
+
+---
+
+## Build
+
+```bash
+xcodebuild -target ExifShell -scheme ExifShell build
+```
+
+Requires macOS 14+ and `exiftool` on PATH (for the `which` fallback; common Homebrew paths are checked directly).
