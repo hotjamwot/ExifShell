@@ -37,6 +37,9 @@ struct FileTableView: View {
     let viewModel: FileListViewModel
 
     var body: some View {
+        // Read sortedFiles here so SwiftUI tracks _sortVersion as a dependency
+        // and re-invokes updateNSView whenever the sort cache is invalidated.
+        let _ = viewModel.sortedFiles
         FileTableNSView(viewModel: viewModel)
     }
 }

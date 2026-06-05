@@ -403,6 +403,7 @@ class FileListViewModel {
         for file in targets {
             file.dateTimeOriginal = value
         }
+        invalidateSort()
         statusMessage = "Applied to \(targets.count) file(s)."
     }
 
@@ -444,6 +445,7 @@ class FileListViewModel {
         }
 
         if appliedCount > 0 {
+            invalidateSort()
             let sign = bulkOffsetPositive ? "+" : "−"
             statusMessage = "Applied \(sign)\(amount) \(bulkOffsetUnit.rawValue.lowercased()) to \(appliedCount) file(s)."
         } else if skippedCount > 0 {
@@ -468,6 +470,7 @@ class FileListViewModel {
         for file in targets {
             file.description = value
         }
+        invalidateSort()
         statusMessage = "Applied description to \(targets.count) file(s)."
     }
 
@@ -511,6 +514,7 @@ class FileListViewModel {
         }
 
         if updatedCount > 0 {
+            invalidateSort()
             statusMessage = "Copied \(label) into DateTimeOriginal for \(updatedCount) file(s)."
         } else {
             statusMessage = "Selected files already have matching DateTimeOriginal values."

@@ -144,8 +144,10 @@ enum ExifToolService {
             process.waitUntilExit()
             let data = outPipe.fileHandleForReading.readDataToEndOfFile()
             // ExifTool can return non-zero exit codes for warnings while
-            // still producing valid JSON on stdout. We trust stdout data.
-            return ReadResult(success: process.terminationStatus == 0, stdoutData: data)
+            // still producing valid JSON on stdout. We trust stdout data
+            // if it's non-empty, even if exit code indicates a warning.
+            let success = !data.isEmpty || process.terminationStatus == 0
+            return ReadResult(success: success, stdoutData: data)
         } catch {
             return ReadResult(success: false, stdoutData: Data())
         }
@@ -153,6 +155,13 @@ enum ExifToolService {
 
     /// Runs exiftool for a **write** operation (captures both stdout and stderr
     /// as text for error reporting).
+    ///
+    /// Tolerates exit code 1 as success because all write operations use `-m`
+    /// (ignore minor errors). When `-m` is active, ExifTool still exits with
+    /// code 1 for minor warnings even when all writes succeeded — treating it
+    /// as failure would produce false "Save failed" / "Rename failed" messages
+    /// with misleading verbose output in the status bar.
+    ///
     /// - Parameter args: Command-line arguments for exiftool.
     /// - Returns: A WriteResult with success status and combined text output.
     private static func runWriteTool(with args: [String]) -> WriteResult {
@@ -178,7 +187,13 @@ enum ExifToolService {
                 .joined(separator: "\n")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
 
-            return WriteResult(success: process.terminationStatus == 0, output: combined)
+            // ExifTool exit codes:
+            //   0 = success (no warnings)
+            //   1 = minor warnings (with -m flag, most minor errors are demoted to warnings)
+            //   2+ = fatal errors
+            // All write operations use -m, so treat exit code 1 as success.
+            let success = process.terminationStatus <= 1
+            return WriteResult(success: success, output: combined)
         } catch {
             return WriteResult(success: false, output: error.localizedDescription)
         }
