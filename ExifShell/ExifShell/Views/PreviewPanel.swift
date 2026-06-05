@@ -123,7 +123,8 @@ struct PreviewPanel: View {
                                 label: "Date/Time Original",
                                 original: file.originalDateTimeOriginal,
                                 current: file.dateTimeOriginal,
-                                isDirty: file.isDirty && file.dateTimeOriginal != file.originalDateTimeOriginal
+                                isDirty: file.isDirty && file.dateTimeOriginal != file.originalDateTimeOriginal,
+                                dateSource: file.dateSource
                             )
 
                             fieldDiffRow(
@@ -162,6 +163,12 @@ struct PreviewPanel: View {
                                         viewModel.copyModifyDateToDateTimeOriginalSelection()
                                     } : nil
                                 )
+                            }
+
+                            // Show FileModifyDate separately when it differs from the
+                            // dateTimeOriginal source (i.e. it's displayed as metadata, not as the DTO date)
+                            if let v = file.fileModifyDate, !v.isEmpty, file.dateSource != .fileModifyDate {
+                                metadataRow(label: "File Modify Date", value: v)
                             }
 
                             if let v = file.imageDescription, !v.isEmpty {
@@ -259,9 +266,25 @@ struct PreviewPanel: View {
 
                         // Status
                         if let status = viewModel.statusMessage {
-                            Text(status)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                            HStack(spacing: 6) {
+                                Text(status)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                if viewModel.lastErrorDetail != nil {
+                                    Button {
+                                        if let detail = viewModel.lastErrorDetail {
+                                            NSPasteboard.general.clearContents()
+                                            NSPasteboard.general.setString(detail, forType: .string)
+                                        }
+                                    } label: {
+                                        Image(systemName: "doc.on.doc")
+                                            .font(.caption)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .help("Copy error details to clipboard")
+                                }
+                            }
                         }
                     }
                     .padding()
@@ -302,12 +325,26 @@ struct PreviewPanel: View {
     // MARK: - Field Views
 
     /// A clean diff row: label above, then original (strikethrough) → current (green) when dirty.
+    /// When `dateSource` is provided, shows a small badge indicating where the date came from.
     @ViewBuilder
-    private func fieldDiffRow(label: String, original: String, current: String, isDirty: Bool) -> some View {
+    private func fieldDiffRow(label: String, original: String, current: String, isDirty: Bool, dateSource: ExifToolService.DateSource? = nil) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.caption)
-                .foregroundColor(.secondary)
+            HStack(spacing: 4) {
+                Text(label)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                if !current.isEmpty, let source = dateSource {
+                    Text(sourceBadgeText(source))
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(.orange)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(Color.orange.opacity(0.12))
+                        )
+                }
+            }
 
             if isDirty {
                 Text(original.isEmpty ? "(empty)" : original)
@@ -322,6 +359,18 @@ struct PreviewPanel: View {
                     .font(.system(.body, design: .monospaced))
                     .foregroundColor(.primary)
             }
+        }
+    }
+
+    /// Returns a human-readable badge string for the date source.
+    private func sourceBadgeText(_ source: ExifToolService.DateSource) -> String {
+        switch source {
+        case .dateTimeOriginal:
+            return "EXIF"
+        case .createDate:
+            return "CreateDate"
+        case .fileModifyDate:
+            return "File System"
         }
     }
 

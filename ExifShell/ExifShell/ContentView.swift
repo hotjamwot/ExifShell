@@ -74,6 +74,20 @@ struct ContentView: View {
                                     }
                                 }
                                 Spacer()
+                                if viewModel.lastErrorDetail != nil {
+                                    Button {
+                                        if let detail = viewModel.lastErrorDetail {
+                                            NSPasteboard.general.clearContents()
+                                            NSPasteboard.general.setString(detail, forType: .string)
+                                        }
+                                    } label: {
+                                        Image(systemName: "doc.on.doc")
+                                            .font(.caption)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .help("Copy error details to clipboard")
+                                }
                                 if let progress = viewModel.operationProgress {
                                     ProgressView(value: progress, total: 1.0)
                                         .scaleEffect(0.7)

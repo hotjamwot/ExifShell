@@ -190,7 +190,8 @@ enum ExifToolService {
             dateTimeOriginal: nil, createDate: nil, modifyDate: nil,
             description: nil, imageDescription: nil, captionAbstract: nil, subject: nil,
             keywords: nil, lastKeywordXMP: nil,
-            duration: nil, imageWidth: nil, imageHeight: nil
+            duration: nil, imageWidth: nil, imageHeight: nil,
+            fileModifyDate: nil, dateSource: nil
         )
     }
 
@@ -267,6 +268,18 @@ enum ExifToolService {
         let duration: String?
         let imageWidth: String?
         let imageHeight: String?
+        /// The filesystem modification date from ExifTool's File:FileModifyDate.
+        /// Used as a last-resort fallback for files (e.g. MPG) with no embedded date tags.
+        let fileModifyDate: String?
+        /// Where the dateTimeOriginal value came from. nil when dateTimeOriginal is nil.
+        let dateSource: DateSource?
+    }
+
+    /// Indicates which ExifTool tag provided the dateTimeOriginal value.
+    enum DateSource: String {
+        case dateTimeOriginal
+        case createDate
+        case fileModifyDate
     }
 
     /// Reads all supported metadata fields from multiple files in a **single** ExifTool invocation.
@@ -288,6 +301,7 @@ enum ExifToolService {
             "-DateTimeOriginal",
             "-CreateDate",
             "-ModifyDate",
+            "-FileModifyDate",
             "-Description",
             "-ImageDescription",
             "-Caption-Abstract",
@@ -320,8 +334,24 @@ enum ExifToolService {
         for entry in json {
             let entryPath = (entry.sourceFile as NSString).standardizingPath
             guard let originalURL = pathLookup[entryPath] else { continue }
-            // Fallback: use CreateDate when DateTimeOriginal is unavailable (videos, etc.)
-            let dto = entry.dateTimeOriginal ?? entry.createDate
+            // Fallback chain: DateTimeOriginal → CreateDate → FileModifyDate
+            // FileModifyDate (filesystem timestamp) is the last resort for files
+            // like MPG/MPEG that have no embedded date tags at all.
+            let dateSource: ExifToolService.DateSource?
+            let dto: String?
+            if let dtoValue = entry.dateTimeOriginal {
+                dto = dtoValue
+                dateSource = .dateTimeOriginal
+            } else if let cdValue = entry.createDate {
+                dto = cdValue
+                dateSource = .createDate
+            } else if let fmdValue = entry.fileModifyDate {
+                dto = fmdValue
+                dateSource = .fileModifyDate
+            } else {
+                dto = nil
+                dateSource = nil
+            }
             results[originalURL] = FileMetadata(
                 dateTimeOriginal: dto,
                 createDate: entry.createDate,
@@ -334,7 +364,9 @@ enum ExifToolService {
                 lastKeywordXMP: entry.lastKeywordXMP?.joined(separator: ", "),
                 duration: entry.duration,
                 imageWidth: entry.imageWidth,
-                imageHeight: entry.imageHeight
+                imageHeight: entry.imageHeight,
+                fileModifyDate: entry.fileModifyDate,
+                dateSource: dateSource
             )
         }
         for url in urls {
@@ -376,8 +408,9 @@ enum ExifToolService {
             return WriteResult(success: false, output: error)
         }
 
-        // Split images and videos — they use different primary date tags.
-        let (imageURLs, videoURLs) = splitByMediaType(urls)
+        // Split into images, QuickTime videos, and other videos (AVI, MKV, etc.)
+        // — they use different primary date tags per container format.
+        let (imageURLs, quickTimeURLs, otherVideoURLs) = splitByMediaType(urls)
 
         var allSucceeded = true
         var outputs: [String] = []
@@ -400,8 +433,8 @@ enum ExifToolService {
             if !result.output.isEmpty { outputs.append(result.output) }
         }
 
-        if !videoURLs.isEmpty {
-            // Videos: write QuickTime:CreationDate (the primary video date tag),
+        if !quickTimeURLs.isEmpty {
+            // QuickTime videos (MP4, MOV, M4V): write QuickTime:CreationDate,
             // propagate to CreateDate and ModifyDate.
             let args: [String] = [
                 "-overwrite_original",
@@ -409,14 +442,31 @@ enum ExifToolService {
                 "-QuickTime:CreationDate=\(value)",
                 "-CreateDate=\(value)",
                 "-ModifyDate=\(value)"
-            ] + videoURLs.map(\.path)
+            ] + quickTimeURLs.map(\.path)
+            let result = runWriteTool(with: args)
+            if !result.success { allSucceeded = false }
+            if !result.output.isEmpty { outputs.append(result.output) }
+        }
+
+        if !otherVideoURLs.isEmpty {
+            // Non-QuickTime videos (AVI, MKV, WMV, etc.): use generic
+            // DateTimeOriginal tag which ExifTool maps to the correct
+            // container-specific tag (e.g. RIFF:DateTimeOriginal for AVI).
+            let args: [String] = [
+                "-overwrite_original",
+                "-m",
+                "-DateTimeOriginal=\(value)",
+                "-CreateDate=\(value)",
+                "-ModifyDate=\(value)"
+            ] + otherVideoURLs.map(\.path)
             let result = runWriteTool(with: args)
             if !result.success { allSucceeded = false }
             if !result.output.isEmpty { outputs.append(result.output) }
         }
 
         let combined = outputs.joined(separator: "\n")
-        return WriteResult(success: allSucceeded || imageURLs.isEmpty && videoURLs.isEmpty, output: combined)
+        let anyEmpty = imageURLs.isEmpty && quickTimeURLs.isEmpty && otherVideoURLs.isEmpty
+        return WriteResult(success: allSucceeded || anyEmpty, output: combined)
     }
 
     /// Writes a description value to all description-related tags.
@@ -436,7 +486,8 @@ enum ExifToolService {
             return WriteResult(success: false, output: error)
         }
 
-        let (imageURLs, videoURLs) = splitByMediaType(urls)
+        let (imageURLs, quickTimeURLs, otherVideoURLs) = splitByMediaType(urls)
+        let allVideoURLs = quickTimeURLs + otherVideoURLs
         var allSucceeded = true
         var outputs: [String] = []
 
@@ -454,22 +505,23 @@ enum ExifToolService {
             if !result.output.isEmpty { outputs.append(result.output) }
         }
 
-        if !videoURLs.isEmpty {
-            // Videos: only Description tag is applicable.
-            // ExifTool writes to QuickTime:UserData:Description by default when
-            // targeting `-Description=`. No need for ImageDescription/Caption-Abstract.
+        if !allVideoURLs.isEmpty {
+            // All videos (QuickTime and non-QuickTime): only Description tag is
+            // applicable. ExifTool maps it to the correct container-specific tag
+            // (QuickTime:UserData:Description for MP4/MOV, RIFF:Comment for AVI, etc.).
             let args = [
                 "-overwrite_original",
                 "-m",
                 "-Description=\(value)"
-            ] + videoURLs.map(\.path)
+            ] + allVideoURLs.map(\.path)
             let result = runWriteTool(with: args)
             if !result.success { allSucceeded = false }
             if !result.output.isEmpty { outputs.append(result.output) }
         }
 
         let combined = outputs.joined(separator: "\n")
-        return WriteResult(success: allSucceeded || imageURLs.isEmpty && videoURLs.isEmpty, output: combined)
+        let anyEmpty = imageURLs.isEmpty && allVideoURLs.isEmpty
+        return WriteResult(success: allSucceeded || anyEmpty, output: combined)
     }
 
     /// Result of a rename operation, including a mapping of old path → new path.
@@ -482,18 +534,20 @@ enum ExifToolService {
     }
 
     /// Renames files using their metadata according to the pattern:
-    /// `{CreateDate}_{###}_{Description}.{ext}`
+    /// `{Date}_{###}_{Description}.{ext}`
     ///
-    /// Uses `CreateDate` instead of `DateTimeOriginal` because CreateDate is
-    /// a universal tag available on both images (EXIF:CreateDate) and videos
-    /// (QuickTime:CreateDate), and is always synced by Save. DateTimeOriginal
-    /// only exists on images, so using it would leave videos with empty dates.
+    /// Date source priority:
+    ///   1. `CreateDate` — available on images (EXIF:CreateDate) and
+    ///      QuickTime videos (QuickTime:CreateDate), and always synced by Save.
+    ///   2. `DateTimeOriginal` — fallback for files without CreateDate,
+    ///      notably AVI/RIFF containers which only have RIFF:DateTimeOriginal.
+    ///   3. `FileModifyDate` — last resort for files like MPG/MPEG that have
+    ///      no embedded date tags at all; uses the filesystem modification date.
     ///
-    /// This runs the equivalent of:
-    /// ```
-    /// exiftool -v -m "-FileName<${CreateDate}_%03.c_${Description;...}.%e" \
-    ///     -d "%Y_%m_%d_%H%M" <files...>
-    /// ```
+    /// Runs three ExifTool passes using `-if` to split the batch:
+    ///   Pass 1: files that have CreateDate → uses `${CreateDate}`
+    ///   Pass 2: remaining files without CreateDate but with DateTimeOriginal
+    ///   Pass 3: remaining files without either → uses `${FileModifyDate}`
     ///
     /// With `-v` (verbose) ExifTool outputs lines like:
     /// `'old/path/file.jpg' -> 'new/path/file.jpg'`
@@ -509,48 +563,68 @@ enum ExifToolService {
             return RenameResult(success: false, output: error, pathMapping: [:])
         }
 
-        // Use CreateDate instead of DateTimeOriginal — it's available on both
-        // images and videos, and is always synced by Save.
-        let expression = #"-FileName<${CreateDate}_%03.c_${Description;if($_){s/'\''//g;s/[^\p{L}\p{N}]+/_/g;s/^_+|_+$//g}}.%e"#
-        let args = ["-v", "-m", expression, "-d", "%Y_%m_%d_%H%M"] + urls.map(\.path)
-        let writeResult = runWriteTool(with: args)
+        let descriptionExpr = #"${Description;if($_){s/'\''//g;s/[^\p{L}\p{N}]+/_/g;s/^_+|_+$//g}}"#
+        let dateFmt = ["-d", "%Y_%m_%d_%H%M"]
+        let fileArgs = urls.map(\.path)
 
-        // Parse verbose output for "old_path -> new_path" lines
+        // Pass 1: Rename files that have CreateDate (images + QuickTime videos)
+        let createDateExpr = #"-FileName<${CreateDate}_%03.c_"# + descriptionExpr + #".%e"#
+        let pass1 = runWriteTool(with: ["-v", "-m", "-if", "$CreateDate", createDateExpr] + dateFmt + fileArgs)
+
+        // Pass 2: Rename remaining files without CreateDate using DateTimeOriginal
+        // (e.g. AVI/RIFF containers which only have RIFF:DateTimeOriginal)
+        let dtoExpr = #"-FileName<${DateTimeOriginal}_%03.c_"# + descriptionExpr + #".%e"#
+        let pass2 = runWriteTool(with: ["-v", "-m", "-if", "!$CreateDate&&$DateTimeOriginal", dtoExpr] + dateFmt + fileArgs)
+
+        // Pass 3: Rename remaining files without CreateDate or DateTimeOriginal
+        // using FileModifyDate (e.g. MPG/MPEG with no embedded date tags).
+        // ExifTool's FileModifyDate is always available as it comes from the filesystem.
+        let fmdExpr = #"-FileName<${FileModifyDate}_%03.c_"# + descriptionExpr + #".%e"#
+        let pass3 = runWriteTool(with: ["-v", "-m", "-if", "!$CreateDate&&!$DateTimeOriginal", fmdExpr] + dateFmt + fileArgs)
+
+        // Merge results — succeed only if all passes succeeded (either pass may
+        // have no work to do, which ExifTool reports as success with no output).
+        let anyOutput = [pass1.output, pass2.output, pass3.output]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        let combinedSuccess = pass1.success && pass2.success && pass3.success
+
+        // Parse verbose output for "old_path -> new_path" lines from both passes
         var pathMapping: [String: String] = [:]
-        if writeResult.success {
+        if !anyOutput.isEmpty {
             let pattern = #"'([^']+)'\s*->\s*'([^']+)'"#
             if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
-                let nsRange = NSRange(writeResult.output.startIndex..<writeResult.output.endIndex, in: writeResult.output)
-                let matches = regex.matches(in: writeResult.output, options: [], range: nsRange)
+                let nsRange = NSRange(anyOutput.startIndex..<anyOutput.endIndex, in: anyOutput)
+                let matches = regex.matches(in: anyOutput, options: [], range: nsRange)
                 for match in matches {
                     if match.numberOfRanges == 3,
-                       let oldRange = Range(match.range(at: 1), in: writeResult.output),
-                       let newRange = Range(match.range(at: 2), in: writeResult.output) {
-                        pathMapping[String(writeResult.output[oldRange])] = String(writeResult.output[newRange])
-                    }
-                }
-            }
-
-            // Fallback: if regex parsing found nothing but rename succeeded,
-            // try to detect new filenames by scanning the directory.
-            if pathMapping.isEmpty && !urls.isEmpty {
-                for originalURL in urls {
-                    let parent = originalURL.deletingLastPathComponent()
-                    if let contents = try? FileManager.default.contentsOfDirectory(at: parent,
-                        includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
-                        let newURLs = contents.filter { newURL in
-                            guard newURL.lastPathComponent != originalURL.lastPathComponent else { return false }
-                            return !pathMapping.values.contains(newURL.path)
-                        }
-                        if let newURL = newURLs.first {
-                            pathMapping[originalURL.path] = newURL.path
-                        }
+                       let oldRange = Range(match.range(at: 1), in: anyOutput),
+                       let newRange = Range(match.range(at: 2), in: anyOutput) {
+                        pathMapping[String(anyOutput[oldRange])] = String(anyOutput[newRange])
                     }
                 }
             }
         }
 
-        return RenameResult(success: writeResult.success, output: writeResult.output, pathMapping: pathMapping)
+        // Fallback: if regex parsing found nothing but a rename succeeded,
+        // try to detect new filenames by scanning the directory.
+        if pathMapping.isEmpty && !urls.isEmpty && combinedSuccess {
+            for originalURL in urls {
+                let parent = originalURL.deletingLastPathComponent()
+                if let contents = try? FileManager.default.contentsOfDirectory(at: parent,
+                    includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+                    let newURLs = contents.filter { newURL in
+                        guard newURL.lastPathComponent != originalURL.lastPathComponent else { return false }
+                        return !pathMapping.values.contains(newURL.path)
+                    }
+                    if let newURL = newURLs.first {
+                        pathMapping[originalURL.path] = newURL.path
+                    }
+                }
+            }
+        }
+
+        return RenameResult(success: combinedSuccess, output: anyOutput, pathMapping: pathMapping)
     }
 
     // MARK: - Media Type Helpers
@@ -558,24 +632,50 @@ enum ExifToolService {
     /// Set of known video file extensions.
     private static let videoExtensions: Set<String> = [
         "mp4", "mov", "m4v", "avi", "mkv", "wmv", "flv", "webm",
-        "ts", "mts", "m2ts", "3gp", "3g2", "ogv", "mxf"
+        "ts", "mts", "m2ts", "3gp", "3g2", "ogv", "mxf", "mpg", "mpeg"
     ]
 
-    /// Splits a list of URLs into image and video buckets based on file extension.
+    /// Video extensions that use QuickTime containers (MP4/MOV/M4V).
+    /// These support `-QuickTime:CreationDate` for date writes.
+    private static let quickTimeExtensions: Set<String> = [
+        "mp4", "mov", "m4v"
+    ]
+
+    /// Video extensions that ExifTool cannot write to (RIFF/AVI, MPEG container limitations).
+    /// These files can be read but not modified by ExifTool.
+    private static let unwritableVideoExtensions: Set<String> = [
+        "avi", "mpg", "mpeg"
+    ]
+
+    /// Returns true if the file extension belongs to a video format that ExifTool
+    /// cannot write to (e.g. AVI/RIFF containers).
+    static func isUnwritableVideo(_ url: URL) -> Bool {
+        unwritableVideoExtensions.contains(url.pathExtension.lowercased())
+    }
+
+    /// Splits a list of URLs into image, QuickTime video, and other video buckets
+    /// based on file extension.
+    ///
+    /// QuickTime videos (mp4, mov, m4v) use `-QuickTime:CreationDate` for date writes.
+    /// Other videos (avi, mkv, wmv, etc.) use generic `-DateTimeOriginal` tags.
+    ///
     /// - Parameter urls: The file URLs to split.
-    /// - Returns: A tuple of (imageURLs, videoURLs).
-    private static func splitByMediaType(_ urls: [URL]) -> (images: [URL], videos: [URL]) {
+    /// - Returns: A tuple of (imageURLs, quickTimeURLs, otherVideoURLs).
+    private static func splitByMediaType(_ urls: [URL]) -> (images: [URL], quickTimeVideos: [URL], otherVideos: [URL]) {
         var images: [URL] = []
-        var videos: [URL] = []
+        var quickTimeVideos: [URL] = []
+        var otherVideos: [URL] = []
         for url in urls {
             let ext = url.pathExtension.lowercased()
-            if videoExtensions.contains(ext) {
-                videos.append(url)
+            if quickTimeExtensions.contains(ext) {
+                quickTimeVideos.append(url)
+            } else if videoExtensions.contains(ext) {
+                otherVideos.append(url)
             } else {
                 images.append(url)
             }
         }
-        return (images, videos)
+        return (images, quickTimeVideos, otherVideos)
     }
 }
 
@@ -616,6 +716,7 @@ private struct FullExifToolOutput: Decodable {
     let dateTimeOriginal: String?
     let createDate: String?
     let modifyDate: String?
+    let fileModifyDate: String?
     let description: String?
     let imageDescription: String?
     let captionAbstract: String?
@@ -631,6 +732,7 @@ private struct FullExifToolOutput: Decodable {
         case dateTimeOriginal = "DateTimeOriginal"
         case createDate = "CreateDate"
         case modifyDate = "ModifyDate"
+        case fileModifyDate = "FileModifyDate"
         case description = "Description"
         case imageDescription = "ImageDescription"
         case captionAbstract = "Caption-Abstract"
@@ -648,6 +750,7 @@ private struct FullExifToolOutput: Decodable {
         dateTimeOriginal = try container.decodeIfPresent(String.self, forKey: .dateTimeOriginal)
         createDate = try container.decodeIfPresent(String.self, forKey: .createDate)
         modifyDate = try container.decodeIfPresent(String.self, forKey: .modifyDate)
+        fileModifyDate = try container.decodeIfPresent(String.self, forKey: .fileModifyDate)
         description = try container.decodeIfPresent(String.self, forKey: .description)
         imageDescription = try container.decodeIfPresent(String.self, forKey: .imageDescription)
         captionAbstract = try container.decodeIfPresent(String.self, forKey: .captionAbstract)

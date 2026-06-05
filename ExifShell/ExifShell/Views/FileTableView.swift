@@ -1,152 +1,322 @@
 import SwiftUI
+import AppKit
 
 // ============================================================================
 // FileTableView
 // ============================================================================
 // The editable file list shown in the left pane of the HSplitView.
-// Uses a SwiftUI List (not Table) for reliable @Observable bindings and
-// multi-select support via Set<ImageFile.ID> (⌘+click).
+// Uses an NSTableView (via NSViewRepresentable) for:
+//   - Native column resizing by dragging column-header dividers
+//   - Built-in horizontal + vertical scrolling (NSScrollView)
+//   - Native sort indicator arrows on column headers
+//   - Editable text fields for DateTimeOriginal and Description
 //
 // Columns:
-//   - Filename (sortable, clickable header)
-//   - DateTimeOriginal (editable TextField, monospaced, orange when dirty)
-//   - Description (editable TextField, monospaced, orange when dirty)
+//   - Filename (read-only, sortable, truncates middle)
+//   - DateTimeOriginal (editable, monospaced, orange when dirty)
+//   - Description (editable, monospaced, orange when dirty)
 //
 // Selection syncs to:
 //   - viewModel.selectedFile (first selected → preview panel)
 //   - viewModel.selectedFiles (all selected → bulk edit bars)
 //
-// Inputs:
-//   - viewModel (reads sortedFiles, sortKey/sortAscending, calls toggleSort)
-//
-// Sub-views:
-//   - TableRowView (private): one row with three columns + dirty styling
+// Sort syncs to:
+//   - viewModel.sortKey / viewModel.sortAscending (via column header clicks)
 // ============================================================================
 
 struct FileTableView: View {
     let viewModel: FileListViewModel
-    @State private var selectedIDs: Set<ImageFile.ID> = []
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Column headers
-            HStack(spacing: 0) {
-                Button {
-                    viewModel.toggleSort(.filename)
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("Filename")
-                        if viewModel.sortKey == .filename {
-                            Image(systemName: viewModel.sortAscending ? "chevron.up" : "chevron.down")
-                                .font(.caption2)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        FileTableNSView(viewModel: viewModel)
+    }
+}
 
-                Divider()
+// MARK: - NSViewRepresentable
 
-                Button {
-                    viewModel.toggleSort(.originalDateTime)
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("Date/Time Original")
-                        if viewModel.sortKey == .originalDateTime {
-                            Image(systemName: viewModel.sortAscending ? "chevron.up" : "chevron.down")
-                                .font(.caption2)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity, alignment: .leading)
+private struct FileTableNSView: NSViewRepresentable {
+    let viewModel: FileListViewModel
 
-                Divider()
+    func makeCoordinator() -> Coordinator {
+        Coordinator(viewModel: viewModel)
+    }
 
-                Button {
-                    viewModel.toggleSort(.description)
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("Description")
-                        if viewModel.sortKey == .description {
-                            Image(systemName: viewModel.sortAscending ? "chevron.up" : "chevron.down")
-                                .font(.caption2)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .font(.caption2)
-            .padding(.vertical, 4)
-            .padding(.horizontal, 8)
-            .frame(minHeight: 20, maxHeight: 28)
-            .background(Color.gray.opacity(0.06))
+    func makeNSView(context: Context) -> NSScrollView {
+        let tableView = NSTableView()
+        tableView.usesAlternatingRowBackgroundColors = true
+        tableView.allowsMultipleSelection = true
+        tableView.rowSizeStyle = .custom
+        tableView.rowHeight = 26
 
-            List(selection: $selectedIDs) {
-                ForEach(viewModel.sortedFiles) { file in
-                    @Bindable var bindableFile = file
-                    TableRowView(
-                        filename: file.filename,
-                        dateTimeOriginal: $bindableFile.dateTimeOriginal,
-                        description: $bindableFile.description,
-                        isDirty: file.isDirty
-                    )
-                    .id(file.id)
-                }
-            }
-            .listStyle(.bordered(alternatesRowBackgrounds: true))
-            .listRowInsets(.init())   // remove default List row insets
-            .onChange(of: selectedIDs) { _, newValue in
-                // Update single selection for the preview panel (first selected)
-                if let firstID = newValue.first {
-                    viewModel.select(viewModel.files.first { $0.id == firstID })
-                } else {
-                    viewModel.select(nil)
-                }
-                // Update multi-selection for bulk edit
-                viewModel.selectedFiles = viewModel.files.filter { newValue.contains($0.id) }
-            }
+        let columnDefs: [(id: String, title: String, width: CGFloat, sortKey: String)] = [
+            ("filename",          "Filename",              200, "filename"),
+            ("dateTimeOriginal",  "Date/Time Original",    200, "dateTimeOriginal"),
+            ("description",       "Description",           300, "description"),
+        ]
+
+        for def in columnDefs {
+            let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(def.id))
+            col.title = def.title
+            col.width = def.width
+            col.minWidth = 80
+            col.resizingMask = [.userResizingMask, .autoresizingMask]
+            col.sortDescriptorPrototype = NSSortDescriptor(key: def.sortKey, ascending: true)
+            tableView.addTableColumn(col)
+        }
+
+        tableView.dataSource = context.coordinator
+        tableView.delegate = context.coordinator
+        context.coordinator.tableView = tableView
+
+        let scrollView = NSScrollView()
+        scrollView.documentView = tableView
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+
+        return scrollView
+    }
+
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        guard let tableView = nsView.documentView as? NSTableView else { return }
+
+        let coordinator = context.coordinator
+        coordinator.files = viewModel.sortedFiles
+
+        let sortChanged = coordinator.sortKey != viewModel.sortKey
+            || coordinator.sortAscending != viewModel.sortAscending
+        coordinator.sortKey = viewModel.sortKey
+        coordinator.sortAscending = viewModel.sortAscending
+
+        // Preserve selection across reload
+        let savedSelection = tableView.selectedRowIndexes
+
+        tableView.reloadData()
+
+        if savedSelection.count > 0 {
+            tableView.selectRowIndexes(savedSelection, byExtendingSelection: false)
+        }
+
+        // Update sort indicator arrows
+        if sortChanged {
+            applySortIndicators(tableView)
+        }
+    }
+
+    private func applySortIndicators(_ tableView: NSTableView) {
+        let key: String
+        switch viewModel.sortKey {
+        case .filename:         key = "filename"
+        case .originalDateTime: key = "dateTimeOriginal"
+        case .description:      key = "description"
+        }
+        let desired = NSSortDescriptor(key: key, ascending: viewModel.sortAscending)
+        if tableView.sortDescriptors.first?.key != key
+            || tableView.sortDescriptors.first?.ascending != viewModel.sortAscending {
+            tableView.sortDescriptors = [desired]
         }
     }
 }
 
-// MARK: - Table Row
+// MARK: - Coordinator (DataSource + Delegate)
 
-private struct TableRowView: View {
-    let filename: String
-    @Binding var dateTimeOriginal: String
-    @Binding var description: String
-    let isDirty: Bool
+extension FileTableNSView {
 
-    var body: some View {
-        HStack(spacing: 0) {
-            Text(filename)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
+    @MainActor
+    class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
 
-            Divider()
+        let viewModel: FileListViewModel
+        weak var tableView: NSTableView?
+        var files: [ImageFile] = []
+        var sortKey: FileListViewModel.SortKey = .filename
+        var sortAscending = true
 
-            TextField("Date/Time Original", text: $dateTimeOriginal)
-                .textFieldStyle(.plain)
-                .font(.system(.body, design: .monospaced))
-                .foregroundColor(isDirty ? .orange : .primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, 8)
-                .help("DateTimeOriginal (EXIF tag)")
-
-            Divider()
-
-            TextField("Description", text: $description)
-                .textFieldStyle(.plain)
-                .font(.system(.body, design: .monospaced))
-                .foregroundColor(isDirty ? .orange : .primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, 8)
-                .help("Description — written to Description, ImageDescription & Caption-Abstract on save")
+        init(viewModel: FileListViewModel) {
+            self.viewModel = viewModel
         }
-        .padding(.vertical, 2)
-        .padding(.horizontal, 8)
+
+        // MARK: Data Source
+
+        func numberOfRows(in tableView: NSTableView) -> Int {
+            files.count
+        }
+
+        // MARK: Delegate — Cell View
+
+        func tableView(_ tableView: NSTableView,
+                        viewFor tableColumn: NSTableColumn?,
+                        row: Int) -> NSView?
+        {
+            guard let columnID = tableColumn?.identifier.rawValue,
+                  row < files.count else { return nil }
+
+            let file = files[row]
+            let cellID = NSUserInterfaceItemIdentifier("\(columnID)_\(row)")
+
+            switch columnID {
+
+            case "filename":
+                let cell = textCell(id: cellID, text: file.filename)
+                cell.textField?.lineBreakMode = .byTruncatingMiddle
+                cell.textField?.toolTip = file.filename
+                return cell
+
+            case "dateTimeOriginal":
+                let cell = editableCell(id: cellID,
+                                        text: file.dateTimeOriginal,
+                                        dirty: file.isDirty,
+                                        columnID: columnID, row: row)
+                cell.textField?.toolTip = "DateTimeOriginal (EXIF tag)"
+                return cell
+
+            case "description":
+                let cell = editableCell(id: cellID,
+                                        text: file.description,
+                                        dirty: file.isDirty,
+                                        columnID: columnID, row: row)
+                cell.textField?.toolTip = "Description — written to Description, ImageDescription & Caption-Abstract on save"
+                return cell
+
+            default:
+                return nil
+            }
+        }
+
+        func tableView(_ tableView: NSTableView,
+                        shouldEdit tableColumn: NSTableColumn?,
+                        row: Int) -> Bool
+        {
+            guard let id = tableColumn?.identifier.rawValue else { return false }
+            return id == "dateTimeOriginal" || id == "description"
+        }
+
+        // MARK: Delegate — Sort
+
+        func tableView(_ tableView: NSTableView,
+                        sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor])
+        {
+            guard let desc = tableView.sortDescriptors.first,
+                  let key = desc.key else { return }
+
+            switch key {
+            case "filename":         viewModel.sortKey = .filename
+            case "dateTimeOriginal": viewModel.sortKey = .originalDateTime
+            case "description":      viewModel.sortKey = .description
+            default:                 return
+            }
+            viewModel.sortAscending = desc.ascending
+        }
+
+        // MARK: Delegate — Selection
+
+        func tableViewSelectionDidChange(_ notification: Notification) {
+            guard let tv = notification.object as? NSTableView else { return }
+
+            let matched = tv.selectedRowIndexes.compactMap { idx -> ImageFile? in
+                idx < files.count ? files[idx] : nil
+            }
+
+            viewModel.select(matched.first)
+            viewModel.selectedFiles = matched
+        }
+
+        // MARK: Editing
+
+        @objc private func textFieldEdited(_ sender: NSTextField) {
+            let row = sender.tag
+            guard row < files.count else { return }
+            let file = files[row]
+            let newValue = sender.stringValue
+
+            switch sender.identifier?.rawValue {
+            case "dateTimeOriginal" where file.dateTimeOriginal != newValue:
+                file.dateTimeOriginal = newValue
+            case "description" where file.description != newValue:
+                file.description = newValue
+            default:
+                return
+            }
+
+            // Mark this field dirty immediately
+            sender.textColor = .orange
+            // Also update the sibling editable column in the same row
+            markRowDirty(row: row)
+        }
+
+        /// Sets the text color of both editable columns in a row to orange.
+        private func markRowDirty(row: Int) {
+            guard let tv = tableView,
+                  let rowView = tv.rowView(atRow: row, makeIfNecessary: false) else { return }
+
+            for colIdx in 0..<tv.tableColumns.count {
+                let colID = tv.tableColumns[colIdx].identifier.rawValue
+                if colID == "dateTimeOriginal" || colID == "description",
+                   let cell = rowView.view(atColumn: colIdx) as? NSTableCellView,
+                   let tf = cell.textField {
+                    tf.textColor = .orange
+                }
+            }
+        }
+
+        // MARK: Cell Factories
+
+        private func textCell(id: NSUserInterfaceItemIdentifier, text: String) -> NSTableCellView {
+            let cell = NSTableCellView()
+            cell.identifier = id
+
+            let tf = NSTextField(labelWithString: text)
+            tf.translatesAutoresizingMaskIntoConstraints = false
+            tf.font = .systemFont(ofSize: NSFont.systemFontSize)
+            tf.lineBreakMode = .byTruncatingMiddle
+
+            cell.addSubview(tf)
+            cell.textField = tf
+
+            NSLayoutConstraint.activate([
+                tf.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+                tf.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                tf.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            ])
+            return cell
+        }
+
+        private func editableCell(id: NSUserInterfaceItemIdentifier,
+                                  text: String,
+                                  dirty: Bool,
+                                  columnID: String,
+                                  row: Int) -> NSTableCellView
+        {
+            let cell = NSTableCellView()
+            cell.identifier = id
+
+            let tf = NSTextField()
+            tf.translatesAutoresizingMaskIntoConstraints = false
+            tf.stringValue = text
+            tf.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+            tf.isEditable = true
+            tf.isBordered = false
+            tf.isBezeled = false
+            tf.drawsBackground = false
+            tf.isSelectable = true
+            tf.focusRingType = .exterior
+            tf.backgroundColor = .clear
+            tf.textColor = dirty ? .orange : .labelColor
+
+            tf.target = self
+            tf.action = #selector(textFieldEdited(_:))
+            tf.tag = row
+            tf.identifier = NSUserInterfaceItemIdentifier(columnID)
+
+            cell.addSubview(tf)
+            cell.textField = tf
+
+            NSLayoutConstraint.activate([
+                tf.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+                tf.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                tf.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            ])
+            return cell
+        }
     }
 }

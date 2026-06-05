@@ -96,6 +96,14 @@ final class ImageFile: Identifiable, Hashable {
     /// Resolution string for video files (e.g. "1920x1080"). nil for images.
     var resolution: String?
 
+    /// The filesystem modification date from ExifTool's File:FileModifyDate.
+    /// Used as a last-resort fallback for files (e.g. MPG) with no embedded date tags.
+    var fileModifyDate: String?
+
+    /// Where the dateTimeOriginal value came from. nil when dateTimeOriginal is nil.
+    /// Used to display a source indicator in the Preview Panel.
+    var dateSource: ExifToolService.DateSource?
+
     // MARK: - Dirty State
 
     /// Whether the file has unsaved changes.
@@ -119,7 +127,9 @@ final class ImageFile: Identifiable, Hashable {
         keywords: String? = nil,
         lastKeywordXMP: String? = nil,
         duration: String? = nil,
-        resolution: String? = nil
+        resolution: String? = nil,
+        fileModifyDate: String? = nil,
+        dateSource: ExifToolService.DateSource? = nil
     ) {
         self.url = url
         self.filename = url.lastPathComponent
@@ -137,6 +147,8 @@ final class ImageFile: Identifiable, Hashable {
         self.lastKeywordXMP = lastKeywordXMP
         self.duration = duration
         self.resolution = resolution
+        self.fileModifyDate = fileModifyDate
+        self.dateSource = dateSource
         self.thumbnail = Self.generateThumbnail(for: url, mediaType: mediaType)
     }
 

@@ -139,6 +139,9 @@ class FileListViewModel {
     var isSaving = false
     var lastSaveFeedback: SaveFeedback?
     var lastDescriptionSaveFeedback: SaveFeedback?
+    /// Stores the full error output from the last failed operation (ExifTool stderr/stdout).
+    /// Displayed alongside status messages containing ❌ so users can copy the details.
+    var lastErrorDetail: String?
 
     /// The bulk-edit value being typed (shown in the toolbar when multiple files are selected).
     var bulkEditValue: String = ""
@@ -295,6 +298,8 @@ class FileListViewModel {
                 if let w = m.imageWidth, let h = m.imageHeight {
                     file.resolution = "\(w)×\(h)"
                 }
+                file.fileModifyDate = m.fileModifyDate
+                file.dateSource = m.dateSource
             }
             file.markClean()
         }
@@ -324,6 +329,8 @@ class FileListViewModel {
         selectedFile = nil
         selectedFiles = []
         lastSaveFeedback = nil
+        lastDescriptionSaveFeedback = nil
+        lastErrorDetail = nil
         statusMessage = nil
         bulkEditValue = ""
         // files.didSet handles invalidation
@@ -338,6 +345,8 @@ class FileListViewModel {
     /// Clears transient save feedback when navigating away or re-selecting.
     private func clearFeedback() {
         lastSaveFeedback = nil
+        lastDescriptionSaveFeedback = nil
+        lastErrorDetail = nil
         statusMessage = nil
         operationMessage = nil
         operationProgress = nil
@@ -537,11 +546,20 @@ class FileListViewModel {
             return false
         }
 
-        isSaving = true
-        beginOperation(message: "Saving changes...", determinate: false)
+        // Separate unwritable video files (ExifTool can't write RIFF/AVI or MPEG containers)
+        let unwritableFiles = dirtyFiles.filter { ExifToolService.isUnwritableVideo($0.url) }
+        let writableFiles = dirtyFiles.filter { !ExifToolService.isUnwritableVideo($0.url) }
 
-        let dateGroupResults = await saveDateGroups(from: dirtyFiles)
-        let descGroupResults = await saveDescriptionGroups(from: dirtyFiles)
+        isSaving = true
+
+        if unwritableFiles.isEmpty {
+            beginOperation(message: "Saving changes...", determinate: false)
+        } else {
+            beginOperation(message: "Saving changes (skipping \(unwritableFiles.count) unwritable file(s))...", determinate: false)
+        }
+
+        let dateGroupResults = await saveDateGroups(from: writableFiles)
+        let descGroupResults = await saveDescriptionGroups(from: writableFiles)
 
         markFilesClean(dirtyFiles,
                        dateChanged: dateGroupResults.changedIDs,
@@ -559,13 +577,22 @@ class FileListViewModel {
         let totalFail = dateGroupResults.failCount + descGroupResults.failCount
         let lastError = dateGroupResults.errorMessage ?? descGroupResults.errorMessage ?? ""
 
+        let aviWarning = unwritableFiles.isEmpty ? "" : " ⚠️ \(unwritableFiles.count) file(s) skipped (ExifTool cannot write AVI/MPEG containers)."
+
         let finalMessage: String
         if totalFail == 0 {
-            finalMessage = "✅ Saved \(totalSuccess) file(s)."
+            if unwritableFiles.isEmpty {
+                finalMessage = "✅ Saved \(totalSuccess) file(s)."
+            } else {
+                finalMessage = "✅ Saved \(totalSuccess) file(s).\(aviWarning)"
+            }
+            lastErrorDetail = nil
         } else if totalSuccess > 0 {
-            finalMessage = "✅ \(totalSuccess) saved, ❌ \(totalFail) failed. Error: \(lastError)"
+            finalMessage = "✅ \(totalSuccess) saved, ❌ \(totalFail) failed. Error: \(lastError)\(aviWarning)"
+            lastErrorDetail = lastError
         } else {
-            finalMessage = "❌ Save failed: \(lastError)"
+            finalMessage = "❌ Save failed: \(lastError)\(aviWarning)"
+            lastErrorDetail = lastError
         }
 
         isSaving = false
@@ -711,11 +738,11 @@ class FileListViewModel {
     var isRenaming = false
 
     /// Runs the rename pipeline on all loaded files.
-    /// Renames files to: `{CreateDate}_{###}_{Description}.{ext}`
+    /// Renames files to: `{Date}_{###}_{Description}.{ext}`
     ///
-    /// Uses CreateDate instead of DateTimeOriginal for the rename pattern
-    /// because CreateDate is available on both images and videos, and is
-    /// always synced by Save.
+    /// Date source: CreateDate for files that have it (images + QuickTime
+    /// videos), falling back to DateTimeOriginal for files without CreateDate
+    /// (notably AVI/RIFF containers).
     ///
     /// Processed in batches of `metadataBatchSize` so the user sees live
     /// determinate progress and ExifTool isn't overwhelmed with a single
@@ -783,8 +810,11 @@ class FileListViewModel {
 
         if allSucceeded {
             endOperation(successMessage: "✅ Renamed \(totalRenamed) file(s) successfully.")
+            lastErrorDetail = nil
         } else {
-            endOperation(successMessage: "❌ Rename failed after \(totalRenamed) file(s): \(lastError ?? "unknown error")")
+            let errorMsg = lastError ?? "unknown error"
+            endOperation(successMessage: "❌ Rename failed after \(totalRenamed) file(s): \(errorMsg)")
+            lastErrorDetail = errorMsg
         }
 
         isRenaming = false
@@ -800,7 +830,7 @@ class FileListViewModel {
 
     private static let videoExtensions: Set<String> = [
         "mp4", "mov", "m4v", "avi", "mkv", "wmv", "flv", "webm",
-        "ts", "mts", "m2ts", "3gp", "3g2", "ogv", "mxf"
+        "ts", "mts", "m2ts", "3gp", "3g2", "ogv", "mxf", "mpg", "mpeg"
     ]
 
     /// Returns the MediaType for a given URL based on its extension.
