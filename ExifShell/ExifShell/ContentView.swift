@@ -36,7 +36,6 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @State private var viewModel = FileListViewModel()
     @State private var isTargeted = false
-    @State private var bulkEditDescriptionValue: String = ""
 
     var body: some View {
         ZStack {
@@ -254,17 +253,15 @@ struct ContentView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
 
-            TextField("Description text...", text: $bulkEditDescriptionValue)
+            TextField("Description text...", text: $viewModel.bulkEditValue)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.caption, design: .monospaced))
                 .frame(minWidth: 250)
                 .onSubmit {
-                    viewModel.bulkEditValue = bulkEditDescriptionValue
                     viewModel.applyBulkEditDescription()
                 }
 
             Button("Apply") {
-                viewModel.bulkEditValue = bulkEditDescriptionValue
                 viewModel.applyBulkEditDescription()
             }
             .buttonStyle(.bordered)
@@ -280,28 +277,30 @@ struct ContentView: View {
     // MARK: - Drop Handling
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
-        let group = DispatchGroup()
-        var urls: [URL] = []
-
-        for provider in providers {
-            group.enter()
-            _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                if let url = url {
+        // Use withCheckedContinuation to load each provider sequentially,
+        // avoiding the data race from concurrent urls.append() on arbitrary threads.
+        Task {
+            var urls: [URL] = []
+            for provider in providers {
+                if let url = await withCheckedContinuation({ continuation in
+                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                        continuation.resume(returning: url)
+                    }
+                }) {
                     urls.append(url)
                 }
-                group.leave()
             }
-        }
 
-        group.notify(queue: .main) {
-            let folders = urls.filter { $0.hasDirectoryPath }
-            let files = urls.filter { !$0.hasDirectoryPath }
+            await MainActor.run {
+                let folders = urls.filter { $0.hasDirectoryPath }
+                let files = urls.filter { !$0.hasDirectoryPath }
 
-            if !files.isEmpty {
-                viewModel.importFiles(files)
-            }
-            for folder in folders {
-                viewModel.importFolder(folder)
+                if !files.isEmpty {
+                    viewModel.importFiles(files)
+                }
+                for folder in folders {
+                    viewModel.importFolder(folder)
+                }
             }
         }
 

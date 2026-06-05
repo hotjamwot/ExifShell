@@ -48,6 +48,14 @@ struct PreviewPanel: View {
                             .truncationMode(.middle)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
+                        Text(file.url.deletingLastPathComponent().path)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
                         if viewModel.selectedFiles.count > 1 {
                             Text("\(viewModel.selectedFiles.count) files selected")
                                 .font(.caption)
@@ -165,11 +173,6 @@ struct PreviewPanel: View {
                                 )
                             }
 
-                            // Show FileModifyDate separately when it differs from the
-                            // dateTimeOriginal source (i.e. it's displayed as metadata, not as the DTO date)
-                            if let v = file.fileModifyDate, !v.isEmpty, file.dateSource != .fileModifyDate {
-                                metadataRow(label: "File Modify Date", value: v)
-                            }
 
                             if let v = file.imageDescription, !v.isEmpty {
                                 metadataRow(label: "Image Description", value: v)

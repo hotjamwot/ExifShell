@@ -22,6 +22,15 @@ import AppKit
 //
 // Sort syncs to:
 //   - viewModel.sortKey / viewModel.sortAscending (via column header clicks)
+//
+// ===== NSTableView Cell Reuse =====
+// Cell identifiers are based solely on the column ID (e.g. "filename",
+// "dateTimeOriginal", "description") so NSTableView can recycle views
+// across rows. tableView.makeView(withIdentifier:owner:) is used to
+// dequeue a reusable cell; a new one is only created when the queue
+// is empty. This avoids destroying and recreating every cell on each
+// reloadData(), which previously happened because identifiers included
+// the row index ("\(columnID)_\(row)").
 // ============================================================================
 
 struct FileTableView: View {
@@ -152,29 +161,31 @@ extension FileTableNSView {
                   row < files.count else { return nil }
 
             let file = files[row]
-            let cellID = NSUserInterfaceItemIdentifier("\(columnID)_\(row)")
+            // Stable identifier based solely on column ID, not row index.
+            // This lets NSTableView reuse cells across rows.
+            let cellID = NSUserInterfaceItemIdentifier(columnID)
 
             switch columnID {
 
             case "filename":
-                let cell = textCell(id: cellID, text: file.filename)
+                let cell = dequeueTextCell(tableView: tableView, id: cellID, text: file.filename)
                 cell.textField?.lineBreakMode = .byTruncatingMiddle
                 cell.textField?.toolTip = file.filename
                 return cell
 
             case "dateTimeOriginal":
-                let cell = editableCell(id: cellID,
-                                        text: file.dateTimeOriginal,
-                                        dirty: file.isDirty,
-                                        columnID: columnID, row: row)
+                let cell = dequeueEditableCell(tableView: tableView, id: cellID,
+                                                text: file.dateTimeOriginal,
+                                                dirty: file.isDirty,
+                                                columnID: columnID, row: row)
                 cell.textField?.toolTip = "DateTimeOriginal (EXIF tag)"
                 return cell
 
             case "description":
-                let cell = editableCell(id: cellID,
-                                        text: file.description,
-                                        dirty: file.isDirty,
-                                        columnID: columnID, row: row)
+                let cell = dequeueEditableCell(tableView: tableView, id: cellID,
+                                                text: file.description,
+                                                dirty: file.isDirty,
+                                                columnID: columnID, row: row)
                 cell.textField?.toolTip = "Description — written to Description, ImageDescription & Caption-Abstract on save"
                 return cell
 
@@ -259,9 +270,19 @@ extension FileTableNSView {
             }
         }
 
-        // MARK: Cell Factories
+        // MARK: Cell Factories — With NSTableView Reuse
 
-        private func textCell(id: NSUserInterfaceItemIdentifier, text: String) -> NSTableCellView {
+        /// Dequeues or creates a read-only text cell for the given column identifier.
+        /// Uses `tableView.makeView(withIdentifier:owner:)` so views are recycled.
+        private func dequeueTextCell(tableView: NSTableView,
+                                      id: NSUserInterfaceItemIdentifier,
+                                      text: String) -> NSTableCellView
+        {
+            if let existing = tableView.makeView(withIdentifier: id, owner: self) as? NSTableCellView {
+                existing.textField?.stringValue = text
+                return existing
+            }
+
             let cell = NSTableCellView()
             cell.identifier = id
 
@@ -281,12 +302,24 @@ extension FileTableNSView {
             return cell
         }
 
-        private func editableCell(id: NSUserInterfaceItemIdentifier,
-                                  text: String,
-                                  dirty: Bool,
-                                  columnID: String,
-                                  row: Int) -> NSTableCellView
+        /// Dequeues or creates an editable cell for the given column identifier.
+        /// Uses `tableView.makeView(withIdentifier:owner:)` so views are recycled.
+        private func dequeueEditableCell(tableView: NSTableView,
+                                          id: NSUserInterfaceItemIdentifier,
+                                          text: String,
+                                          dirty: Bool,
+                                          columnID: String,
+                                          row: Int) -> NSTableCellView
         {
+            if let existing = tableView.makeView(withIdentifier: id, owner: self) as? NSTableCellView,
+               let existingTF = existing.textField
+            {
+                existingTF.stringValue = text
+                existingTF.textColor = dirty ? .orange : .labelColor
+                existingTF.tag = row
+                return existing
+            }
+
             let cell = NSTableCellView()
             cell.identifier = id
 

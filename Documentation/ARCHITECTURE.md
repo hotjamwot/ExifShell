@@ -90,17 +90,20 @@ Sources/
   - `modifyDate: String?` — EXIF ModifyDate (not editable, for reference only).
   - `imageDescription: String?` — EXIF ImageDescription (display-only; synced from description on save).
   - `captionAbstract: String?` — IPTC Caption-Abstract (display-only; synced from description on save).
+  - `fileModifyDate: String?` — Filesystem modification timestamp from ExifTool's `File:FileModifyDate`. Used as a last-resort fallback for files with no embedded date tags (e.g. MPG/MPEG).
+  - `dateSource: ExifToolService.DateSource?` — Indicates which tag provided the `dateTimeOriginal` value (`.dateTimeOriginal`, `.createDate`, or `.fileModifyDate`). Used by PreviewPanel to show a source badge.
 - `markClean()` resets both baselines (originalDateTimeOriginal & originalDescription) and clears the dirty flag.
 - Identifiable (UUID) and Hashable for List selection.
 
 ### ExifToolService (Service Layer)
 - **Path resolution:** Locates `exiftool` at static init time by checking common paths (`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/opt/local/bin`) and falling back to `which exiftool`. This ensures the app works from Terminal, Xcode, or a bundled `.app` regardless of PATH.
-- **Read (full batch):** `readAllMetadata(from:)` — calls `exiftool -json -DateTimeOriginal -CreateDate -ModifyDate -Description -ImageDescription -Caption-Abstract <files...>` once for all files, decodes JSON, returns `[URL: FileMetadata]`.
+- **Read (full batch):** `readAllMetadata(from:)` — calls `exiftool -json -DateTimeOriginal -CreateDate -ModifyDate -FileModifyDate -Description -ImageDescription -Caption-Abstract -Subject -Keywords -LastKeywordXMP -Duration -ImageWidth -ImageHeight <files...>` once for all files, decodes JSON, returns `[URL: FileMetadata]`. The `FileMetadata` struct includes a `dateSource: DateSource?` field that tracks whether `dateTimeOriginal` came from the embedded tag, `CreateDate`, or the filesystem `FileModifyDate`.
 - **Read (date only batch):** `readDateTimeOriginal(from:)` — legacy method, same pattern but only reads DateTimeOriginal.
 - **Write (date):** Calls `exiftool -overwrite_original -EXIF:DateTimeOriginal="<value>" <file1> <file2> ...` — uses the `EXIF:` group specifier to target the correct EXIF tag.
 - **Write (description):** Calls `exiftool -overwrite_original -Description="<value>" -ImageDescription="<value>" -Caption-Abstract="<value>" <files...>` — writes the same value to all three description-related tags in one call.
 - Supports batch writes: accepts `[URL]` so multiple files with the same value are sent in a single process invocation.
 - Returns a `WriteResult` struct with `success: Bool` and `output: String` (captured stdout/stderr for error reporting).
+- **Rename (3-pass):** `renameFiles(_ urls:)` uses three ExifTool passes: Pass 1 uses `${CreateDate}`, Pass 2 falls back to `${DateTimeOriginal}`, Pass 3 uses `${FileModifyDate}` for files with no embedded date tags (MPG/MPEG).
 - All metadata logic is delegated to ExifTool.
 
 ### FileListViewModel (ViewModel)
@@ -122,7 +125,7 @@ Sources/
   4. Only marks a file clean if ALL its field writes succeeded.
   5. Updates independent feedback for date and description saves.
 - `sanitiseAll()` — saves dirty files first, then processes files in **batches of 80** with live determinate progress (`"Sanitising (X/Y)..."`), then re-reads all metadata from disk to refresh the display.
-- `renameAll()` — saves dirty files first, then processes files in **batches of 80** with live determinate progress (`"Renaming (X/Y)..."`), updates the in-memory URL for renamed files via the ExifTool path mapping.
+- `renameAll()` — saves dirty files first, then processes files in **batches of 80** with live determinate progress (`"Renaming (X/Y)..."`), updates the in-memory URL for renamed files via the ExifTool path mapping. Uses three ExifTool passes: Pass 1 renames files with `CreateDate` (images + QuickTime videos) via `${CreateDate}`, Pass 2 falls back to `${DateTimeOriginal}` for files without CreateDate (AVI/RIFF containers), Pass 3 uses `${FileModifyDate}` for files with no embedded date tags at all (MPG/MPEG).
 
 ### DropZoneView
 - Purely visual. Shows the empty-state icon and instructions when no files are loaded.
@@ -140,11 +143,12 @@ Sources/
 - Wrapped in `ScrollView` to accommodate all metadata.
 - Shows thumbnail (loaded via `NSImage(contentsOf:)`).
 - **Editable Fields section:**
-  - DateTimeOriginal diff view when dirty (grey strikethrough → green bold).
+  - DateTimeOriginal diff view when dirty (grey strikethrough → green bold). When a `dateSource` is available, an orange source badge is shown next to the label: "EXIF" for embedded dates, "CreateDate" for CreateDate fallback, or "File System" for filesystem dates.
   - Description diff view when dirty (grey strikethrough → green bold).
 - **Read-Only Metadata section:**
   - Create Date (from `CreateDate` EXIF tag).
   - Modify Date (from `ModifyDate` EXIF tag).
+  - File Modify Date (from `File:FileModifyDate`) — only shown when it's not already used as the dateTimeOriginal source (to avoid duplication).
   - ImageDescription (from `ImageDescription` EXIF tag).
   - Caption-Abstract (from `Caption-Abstract` IPTC tag).
   - Subject (from `Subject`, joined into a string when present).
@@ -165,7 +169,7 @@ Sources/
 
 ## Data Flow
 
-1. **Import:** User drops files → `ContentView.onDrop` resolves URLs → ViewModel filters by extension, deduplicates, immediately appends placeholder `ImageFile` entries to the list → reads metadata in batches of 80 via `loadMetadata(for:)` → updates `operationProgress` and `operationMessage` after each batch → populates all fields including date, description, create/modify dates, imageDescription, captionAbstract, subject.
+1. **Import:** User drops files → `ContentView.onDrop` resolves URLs → ViewModel filters by extension, deduplicates, immediately appends placeholder `ImageFile` entries to the list → reads metadata in batches of 80 via `loadMetadata(for:)` → updates `operationProgress` and `operationMessage` after each batch → populates all fields including date, description, create/modify/file-modify dates, imageDescription, captionAbstract, subject. For files with no embedded date tags (MPG/MPEG), `dateTimeOriginal` is populated from the filesystem `FileModifyDate` as a last resort, with `dateSource` set to `.fileModifyDate`.
 2. **Edit (single):** User clicks into the DateTimeOriginal or Description `TextField` → edits value → binding writes to the `@Observable` model → `didSet` on the respective field marks file dirty → UI auto-updates.
 3. **Edit (bulk):** User selects multiple files (⌘+click) → bulk edit bars appear → types a value → presses Enter or "Apply" → `applyBulkEdit()` or `applyBulkEditDescription()` sets value on selected files.
 4. **Review:** Preview panel shows grey (original) → green (proposed) diff for both date and description. Read-only metadata displayed below.

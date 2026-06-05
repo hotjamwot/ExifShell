@@ -393,8 +393,13 @@ enum ExifToolService {
     ///
     /// **For videos:**
     ///   - Writes QuickTime:CreationDate
-    ///   - Copies to CreateDate, ModifyDate
+    ///   - Copies to CreateDate, ModifyDate, and DateTimeOriginal
     ///   - (No offset time tags — not applicable to QuickTime containers)
+    ///
+    /// Note: DateTimeOriginal is included so readAllMetadata (which reads
+    /// DateTimeOriginal as the primary DTO field) returns the updated value
+    /// when the file is re-imported. Without this, .mov/.mp4 files would
+    /// appear to save correctly in the UI but revert on re-import.
     ///
     /// - Parameters:
     ///   - value: The date string to write (e.g. "2024:01:15 14:30:00").
@@ -435,13 +440,17 @@ enum ExifToolService {
 
         if !quickTimeURLs.isEmpty {
             // QuickTime videos (MP4, MOV, M4V): write QuickTime:CreationDate,
-            // propagate to CreateDate and ModifyDate.
+            // propagate to CreateDate, ModifyDate, and DateTimeOriginal.
+            // DateTimeOriginal is read back by the app's readAllMetadata as the
+            // primary DTO field — without writing it, the change appears to "stick"
+            // in the table but reverts on re-import.
             let args: [String] = [
                 "-overwrite_original",
                 "-m",
                 "-QuickTime:CreationDate=\(value)",
                 "-CreateDate=\(value)",
-                "-ModifyDate=\(value)"
+                "-ModifyDate=\(value)",
+                "-DateTimeOriginal=\(value)"
             ] + quickTimeURLs.map(\.path)
             let result = runWriteTool(with: args)
             if !result.success { allSucceeded = false }
@@ -533,6 +542,15 @@ enum ExifToolService {
         let pathMapping: [String: String]
     }
 
+    /// Metadata needed for renaming a single file. Provides in-memory values
+    /// so unwritable files (AVI, MPEG) can be renamed using the edited
+    /// DateTimeOriginal rather than the stale on-disk value.
+    struct RenameInput {
+        let url: URL
+        let dateTimeOriginal: String
+        let description: String
+    }
+
     /// Renames files using their metadata according to the pattern:
     ///   - With description: `{Date}_{###}_{Description}.{ext}`
     ///   - Without description: `{Date}_{###}.{ext}`
@@ -558,72 +576,118 @@ enum ExifToolService {
     /// `'old/path/file.jpg' -> 'new/path/file.jpg'`
     /// which we parse to build the path mapping for the caller.
     ///
-    /// - Parameter urls: The file URLs to rename.
+    /// - Parameters:
+    ///   - inputs: The file inputs (URL + metadata) to rename.
+    ///   - progressHandler: Optional closure called after each of the 3 ExifTool
+    ///     rename passes with a progress value in [0,1] and a message describing
+    ///     the current pass. This lets the caller (e.g. ViewModel) show granular
+    ///     progress within a single batch chunk instead of the progress bar
+    ///     stalling during each multi-pass ExifTool invocation.
     /// - Returns: A RenameResult with success status, output, and a path mapping.
-    static func renameFiles(_ urls: [URL]) -> RenameResult {
-        guard !urls.isEmpty else {
+    static func renameFiles(_ inputs: [RenameInput],
+                             progressHandler: ((Double, String) -> Void)? = nil) -> RenameResult {
+        guard !inputs.isEmpty else {
             return RenameResult(success: false, output: "No files provided.", pathMapping: [:])
         }
         if let error = missingToolError {
             return RenameResult(success: false, output: error, pathMapping: [:])
         }
 
+        // Split into writable (ExifTool can modify) and unwritable (AVI, MPEG).
+        // Unwritable files are renamed via FileManager using in-memory metadata.
+        let writableInputs = inputs.filter { !isUnwritableVideo($0.url) }
+        let unwritableInputs = inputs.filter { isUnwritableVideo($0.url) }
+
+        var allPathMapping: [String: String] = [:]
+        var allOutputs: [String] = []
+        var allSucceeded = true
+
+        // === Writable files: Use ExifTool 3-pass rename ===
+        if !writableInputs.isEmpty {
+            let result = renameWritableFiles(writableInputs, progressHandler: progressHandler)
+            for (k, v) in result.pathMapping { allPathMapping[k] = v }
+            if !result.output.isEmpty { allOutputs.append(result.output) }
+            if !result.success { allSucceeded = false }
+        }
+
+        // === Unwritable files: Use FileManager with in-memory metadata ===
+        if !unwritableInputs.isEmpty {
+            let result = renameUnwritableFiles(unwritableInputs)
+            for (k, v) in result.pathMapping { allPathMapping[k] = v }
+            if !result.output.isEmpty { allOutputs.append(result.output) }
+            if !result.success { allSucceeded = false }
+        }
+
+        let combinedOutput = allOutputs.joined(separator: "\n")
+        return RenameResult(success: allSucceeded, output: combinedOutput, pathMapping: allPathMapping)
+    }
+
+    // MARK: - Rename Helpers
+
+    /// Renames writable files using ExifTool's 3-pass approach.
+    /// Each pass only processes files not already renamed by a previous pass,
+    /// preventing "File not found" errors when a file is renamed in Pass 1
+    /// but still listed in the args for Pass 2/3.
+    ///
+    /// - Parameters:
+    ///   - inputs: The file inputs to rename.
+    ///   - progressHandler: Optional closure called after each pass with progress
+    ///     in [0,1] and a message. progressHandler is called 3 times total:
+    ///     at ~0.17 (1/6), ~0.5 (3/6), ~0.83 (5/6).
+    private static func renameWritableFiles(_ inputs: [RenameInput],
+                                             progressHandler: ((Double, String) -> Void)? = nil) -> RenameResult {
         let descriptionExpr = #"${Description;if($_){s/'\''//g;s/[^\p{L}\p{N}]+/_/g;s/^_+|_+$//g;$_="_ ".$_}}"#
         let dateFmt = ["-d", "%Y_%m_%d_%H%M"]
-        let fileArgs = urls.map(\.path)
 
         // Pass 1: Rename files that have CreateDate (images + QuickTime videos)
         let createDateExpr = #"-FileName<${CreateDate}_%03.c"# + descriptionExpr + #".%e"#
-        let pass1 = runWriteTool(with: ["-v", "-m", "-if", "$CreateDate", createDateExpr] + dateFmt + fileArgs)
+        let fileArgs1 = inputs.map(\.url.path)
+        progressHandler?(1.0 / 6.0, "Renaming pass 1/3 (CreateDate)...")
+        let pass1 = runWriteTool(with: ["-v", "-m", "-if", "$CreateDate", createDateExpr] + dateFmt + fileArgs1)
+        let pass1Renamed = Self.parseRenamedPaths(from: pass1.output)
 
         // Pass 2: Rename remaining files without CreateDate using DateTimeOriginal
         // (e.g. AVI/RIFF containers which only have RIFF:DateTimeOriginal)
+        let remainingAfterPass1 = inputs.filter { !pass1Renamed.keys.contains($0.url.path) }
         let dtoExpr = #"-FileName<${DateTimeOriginal}_%03.c"# + descriptionExpr + #".%e"#
-        let pass2 = runWriteTool(with: ["-v", "-m", "-if", "!$CreateDate&&$DateTimeOriginal", dtoExpr] + dateFmt + fileArgs)
+        let fileArgs2 = remainingAfterPass1.map(\.url.path)
+        progressHandler?(3.0 / 6.0, "Renaming pass 2/3 (DateTimeOriginal)...")
+        let pass2 = runWriteTool(with: ["-v", "-m", "-if", "!$CreateDate&&$DateTimeOriginal", dtoExpr] + dateFmt + fileArgs2)
+        let pass2Renamed = Self.parseRenamedPaths(from: pass2.output)
 
         // Pass 3: Rename remaining files without CreateDate or DateTimeOriginal
         // using FileModifyDate (e.g. MPG/MPEG with no embedded date tags).
-        // ExifTool's FileModifyDate is always available as it comes from the filesystem.
+        let remainingAfterPass2 = remainingAfterPass1.filter { !pass2Renamed.keys.contains($0.url.path) }
         let fmdExpr = #"-FileName<${FileModifyDate}_%03.c"# + descriptionExpr + #".%e"#
-        let pass3 = runWriteTool(with: ["-v", "-m", "-if", "!$CreateDate&&!$DateTimeOriginal", fmdExpr] + dateFmt + fileArgs)
+        let fileArgs3 = remainingAfterPass2.map(\.url.path)
+        progressHandler?(5.0 / 6.0, "Renaming pass 3/3 (FileModifyDate)...")
+        let pass3 = runWriteTool(with: ["-v", "-m", "-if", "!$CreateDate&&!$DateTimeOriginal", fmdExpr] + dateFmt + fileArgs3)
+        let pass3Renamed = Self.parseRenamedPaths(from: pass3.output)
 
-        // Merge results — succeed only if all passes succeeded (either pass may
-        // have no work to do, which ExifTool reports as success with no output).
+        // Merge path mappings from all passes
+        var pathMapping: [String: String] = [:]
+        for (k, v) in pass1Renamed { pathMapping[k] = v }
+        for (k, v) in pass2Renamed { pathMapping[k] = v }
+        for (k, v) in pass3Renamed { pathMapping[k] = v }
+
         let anyOutput = [pass1.output, pass2.output, pass3.output]
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
         let combinedSuccess = pass1.success && pass2.success && pass3.success
 
-        // Parse verbose output for "old_path -> new_path" lines from both passes
-        var pathMapping: [String: String] = [:]
-        if !anyOutput.isEmpty {
-            let pattern = #"'([^']+)'\s*->\s*'([^']+)'"#
-            if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
-                let nsRange = NSRange(anyOutput.startIndex..<anyOutput.endIndex, in: anyOutput)
-                let matches = regex.matches(in: anyOutput, options: [], range: nsRange)
-                for match in matches {
-                    if match.numberOfRanges == 3,
-                       let oldRange = Range(match.range(at: 1), in: anyOutput),
-                       let newRange = Range(match.range(at: 2), in: anyOutput) {
-                        pathMapping[String(anyOutput[oldRange])] = String(anyOutput[newRange])
-                    }
-                }
-            }
-        }
-
         // Fallback: if regex parsing found nothing but a rename succeeded,
         // try to detect new filenames by scanning the directory.
-        if pathMapping.isEmpty && !urls.isEmpty && combinedSuccess {
-            for originalURL in urls {
-                let parent = originalURL.deletingLastPathComponent()
+        if pathMapping.isEmpty && !inputs.isEmpty && combinedSuccess {
+            for input in inputs {
+                let parent = input.url.deletingLastPathComponent()
                 if let contents = try? FileManager.default.contentsOfDirectory(at: parent,
                     includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
                     let newURLs = contents.filter { newURL in
-                        guard newURL.lastPathComponent != originalURL.lastPathComponent else { return false }
+                        guard newURL.lastPathComponent != input.url.lastPathComponent else { return false }
                         return !pathMapping.values.contains(newURL.path)
                     }
                     if let newURL = newURLs.first {
-                        pathMapping[originalURL.path] = newURL.path
+                        pathMapping[input.url.path] = newURL.path
                     }
                 }
             }
@@ -632,10 +696,146 @@ enum ExifToolService {
         return RenameResult(success: combinedSuccess, output: anyOutput, pathMapping: pathMapping)
     }
 
+    /// Renames unwritable files (AVI, MPEG) using FileManager and in-memory metadata.
+    /// Since ExifTool cannot write to RIFF/AVI or MPEG containers, we generate the
+    /// target filename in Swift from the in-memory DateTimeOriginal/Description values
+    /// and perform a filesystem rename.
+    private static func renameUnwritableFiles(_ inputs: [RenameInput]) -> RenameResult {
+        var pathMapping: [String: String] = [:]
+        var outputs: [String] = []
+        var allSucceeded = true
+
+        // Group by parent directory so the counter is per-directory (matches ExifTool behaviour)
+        let grouped = Dictionary(grouping: inputs) { $0.url.deletingLastPathComponent().path }
+
+        for (_, group) in grouped {
+            var counter = 0
+            for input in group {
+                guard !input.dateTimeOriginal.isEmpty else {
+                    outputs.append("Skipping \(input.url.lastPathComponent): no date value available.")
+                    allSucceeded = false
+                    continue
+                }
+
+                guard let dateStr = Self.formatDateForRename(input.dateTimeOriginal) else {
+                    outputs.append("Skipping \(input.url.lastPathComponent): invalid date format '\(input.dateTimeOriginal)'.")
+                    allSucceeded = false
+                    continue
+                }
+
+                let descStr = Self.sanitizeDescriptionForRename(input.description)
+                let ext = input.url.pathExtension
+                let parent = input.url.deletingLastPathComponent()
+
+                // Build the new filename: {date}_{counter}{description}.{ext}
+                let newFilename = "\(dateStr)_\(String(format: "%03d", counter))\(descStr).\(ext)"
+                var finalURL = parent.appendingPathComponent(newFilename)
+
+                // Handle collision by incrementing counter
+                var attempts = 0
+                while FileManager.default.fileExists(atPath: finalURL.path)
+                        && finalURL.path != input.url.path
+                        && attempts < 1000 {
+                    counter += 1
+                    let retryFilename = "\(dateStr)_\(String(format: "%03d", counter))\(descStr).\(ext)"
+                    finalURL = parent.appendingPathComponent(retryFilename)
+                    attempts += 1
+                }
+
+                // Skip if the file is already named correctly
+                if finalURL.path == input.url.path {
+                    outputs.append("'\(input.url.path)' already named correctly.")
+                    counter += 1
+                    continue
+                }
+
+                do {
+                    try FileManager.default.moveItem(at: input.url, to: finalURL)
+                    pathMapping[input.url.path] = finalURL.path
+                    outputs.append("'\(input.url.path)' -> '\(finalURL.path)'")
+                } catch {
+                    outputs.append("Error renaming \(input.url.lastPathComponent): \(error.localizedDescription)")
+                    allSucceeded = false
+                }
+
+                counter += 1
+            }
+        }
+
+        let combined = outputs.joined(separator: "\n")
+        return RenameResult(success: allSucceeded, output: combined, pathMapping: pathMapping)
+    }
+
+    /// Parses ExifTool verbose `-v` output for `'old' -> 'new'` rename lines.
+    /// ExifTool outputs lines like:
+    ///   `'/Volumes/.../file.MOV' --> '/Volumes/.../renamed.MOV'`
+    /// The arrow is `-->` (three dashes + greater-than), not `->`.
+    private static func parseRenamedPaths(from output: String) -> [String: String] {
+        var pathMapping: [String: String] = [:]
+        guard !output.isEmpty else { return pathMapping }
+        let pattern = #"'([^']+)'\s*-+>\s*'([^']+)'"#
+        if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
+            let nsRange = NSRange(output.startIndex..<output.endIndex, in: output)
+            let matches = regex.matches(in: output, options: [], range: nsRange)
+            for match in matches {
+                if match.numberOfRanges == 3,
+                   let oldRange = Range(match.range(at: 1), in: output),
+                   let newRange = Range(match.range(at: 2), in: output) {
+                    pathMapping[String(output[oldRange])] = String(output[newRange])
+                }
+            }
+        }
+        return pathMapping
+    }
+
+    /// Shared input formatter for parsing ExifTool date strings.
+    private static let renameInputFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy:MM:dd HH:mm:ss"
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        return f
+    }()
+
+    /// Shared output formatter for formatting dates in rename filenames.
+    private static let renameOutputFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy_MM_dd_HHMM"
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        return f
+    }()
+
+    /// Formats an ExifTool date string ("yyyy:MM:dd HH:mm:ss") to the rename
+    /// date format ("yyyy_MM_dd_HHMM").
+    private static func formatDateForRename(_ dateString: String) -> String? {
+        guard let date = renameInputFormatter.date(from: dateString) else { return nil }
+        return renameOutputFormatter.string(from: date)
+    }
+
+    /// Sanitises a description string for use in filenames.
+    /// Matches ExifTool's behaviour: removes single quotes, replaces
+    /// non-alphanumeric sequences with underscores, trims underscores,
+    /// and prepends "_ " if non-empty.
+    private static func sanitizeDescriptionForRename(_ desc: String) -> String {
+        guard !desc.isEmpty else { return "" }
+        var result = desc
+        // Remove single quotes
+        result = result.replacingOccurrences(of: "'", with: "")
+        // Replace sequences of non-letter/non-number characters with underscore
+        result = result.replacingOccurrences(of: "[^\\p{L}\\p{N}]+", with: "_", options: .regularExpression)
+        // Remove leading/trailing underscores
+        result = result.trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+        guard !result.isEmpty else { return "" }
+        return "_ \(result)"
+    }
+
     // MARK: - Media Type Helpers
 
     /// Set of known video file extensions.
-    private static let videoExtensions: Set<String> = [
+    /// Shared across the app — `FileListViewModel` uses this as the single
+    /// source of truth for video extension detection (see Design #3).
+    static let videoExtensions: Set<String> = [
         "mp4", "mov", "m4v", "avi", "mkv", "wmv", "flv", "webm",
         "ts", "mts", "m2ts", "3gp", "3g2", "ogv", "mxf", "mpg", "mpeg"
     ]
@@ -685,16 +885,6 @@ enum ExifToolService {
 }
 
 // MARK: - JSON Decoding
-
-private struct ExifToolOutput: Decodable {
-    let sourceFile: String
-    let dateTimeOriginal: String?
-
-    enum CodingKeys: String, CodingKey {
-        case sourceFile = "SourceFile"
-        case dateTimeOriginal = "DateTimeOriginal"
-    }
-}
 
 /// Decoding struct for readDateTimeOriginal fallback — needs both
 /// DateTimeOriginal and CreateDate to implement the video fallback.

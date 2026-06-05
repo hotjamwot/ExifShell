@@ -561,7 +561,12 @@ class FileListViewModel {
         let dateGroupResults = await saveDateGroups(from: writableFiles)
         let descGroupResults = await saveDescriptionGroups(from: writableFiles)
 
-        markFilesClean(dirtyFiles,
+        // Only mark writable files clean — unwritable files (AVI/MPEG) were
+        // skipped by the save helpers, so their changes were not persisted.
+        // Previously this incorrectly passed dirtyFiles (including unwritable),
+        // causing unwritable files to be silently marked clean despite their
+        // changes never being written to disk.
+        markFilesClean(writableFiles,
                        dateChanged: dateGroupResults.changedIDs,
                        dateSaved: dateGroupResults.savedIDs,
                        descChanged: descGroupResults.changedIDs,
@@ -771,9 +776,15 @@ class FileListViewModel {
         beginOperation(message: "Renaming \(files.count) file(s)...", determinate: true)
         clearFeedback()
 
-        let allURLs = files.map(\.url)
-        let chunks = stride(from: 0, to: allURLs.count, by: metadataBatchSize).map { start in
-            Array(allURLs[start..<min(start + metadataBatchSize, allURLs.count)])
+        let allInputs = files.map { file in
+            ExifToolService.RenameInput(
+                url: file.url,
+                dateTimeOriginal: file.dateTimeOriginal,
+                description: file.description
+            )
+        }
+        let chunks = stride(from: 0, to: allInputs.count, by: metadataBatchSize).map { start in
+            Array(allInputs[start..<min(start + metadataBatchSize, allInputs.count)])
         }
         let totalChunks = chunks.count
 
@@ -782,13 +793,28 @@ class FileListViewModel {
         var lastError: String?
 
         for (index, chunk) in chunks.enumerated() {
-            let processedCount = min((index + 1) * metadataBatchSize, allURLs.count)
+            let chunkStartProgress = Double(index) / Double(totalChunks)
+            let chunkEndProgress = Double(index + 1) / Double(totalChunks)
+
             updateOperation(
-                progress: Double(index) / Double(totalChunks),
-                message: "Renaming (\(processedCount)/\(allURLs.count))..."
+                progress: chunkStartProgress,
+                message: "Renaming (\(index + 1)/\(totalChunks) chunks)..."
             )
 
-            let result = await runBackground { ExifToolService.renameFiles(chunk) }
+            // Use a progress handler to report per-pass granularity inside each chunk,
+            // so the progress bar doesn't stall during the multi-pass ExifTool rename.
+            let result = await runBackground {
+                ExifToolService.renameFiles(chunk) { passProgress, passMessage in
+                    // Map the per-pass progress (0–1) into the chunk's progress window.
+                    let overallProgress = chunkStartProgress + passProgress * (chunkEndProgress - chunkStartProgress)
+                    Task { @MainActor in
+                        self.updateOperation(
+                            progress: overallProgress,
+                            message: "\(passMessage) (\(index + 1)/\(totalChunks) chunks)"
+                        )
+                    }
+                }
+            }
 
             if result.success {
                 let mappingCount = result.pathMapping.count
@@ -822,29 +848,28 @@ class FileListViewModel {
 
     // MARK: - File Type Detection
 
+    /// Image extensions supported by ExifShell. Video extensions are defined
+    /// in `ExifToolService.videoExtensions` (single source of truth).
     private let imageExtensions: Set<String> = [
         "jpg", "jpeg", "png", "tiff", "tif", "gif", "bmp", "heic", "heif",
         "raw", "cr2", "cr3", "nef", "arw", "dng", "orf", "rw2", "sr2",
         "webp", "ico", "psd"
     ]
 
-    private static let videoExtensions: Set<String> = [
-        "mp4", "mov", "m4v", "avi", "mkv", "wmv", "flv", "webm",
-        "ts", "mts", "m2ts", "3gp", "3g2", "ogv", "mxf", "mpg", "mpeg"
-    ]
-
     /// Returns the MediaType for a given URL based on its extension.
+    /// Uses ExifToolService.videoExtensions as the single source of truth.
     static func mediaType(for url: URL) -> MediaType {
         let ext = url.pathExtension.lowercased()
-        if videoExtensions.contains(ext) {
+        if ExifToolService.videoExtensions.contains(ext) {
             return .video
         }
         return .image
     }
 
     /// Returns true if the file extension is a supported image or video type.
+    /// Video extensions reference ExifToolService.videoExtensions (single source of truth).
     private func isSupportedFile(_ url: URL) -> Bool {
         let ext = url.pathExtension.lowercased()
-        return imageExtensions.contains(ext) || Self.videoExtensions.contains(ext)
+        return imageExtensions.contains(ext) || ExifToolService.videoExtensions.contains(ext)
     }
 }
