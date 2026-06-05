@@ -38,7 +38,7 @@ import Foundation
 // Commands used (see BRIEF.md for full list):
 //   Read:    exiftool -json -TAG1 -TAG2 <files...>
 //   Write:   exiftool -overwrite_original -TAG=VALUE <files...>
-//   Rename:  exiftool -v -m "-FileName<${CreateDate;...}_%03.c_....%e" -d fmt
+//   Rename:  exiftool -v -m "-FileName<${CreateDate;...}_%03.c....%e" -d fmt
 // ============================================================================
 
 enum ExifToolService {
@@ -534,7 +534,12 @@ enum ExifToolService {
     }
 
     /// Renames files using their metadata according to the pattern:
-    /// `{Date}_{###}_{Description}.{ext}`
+    ///   - With description: `{Date}_{###}_{Description}.{ext}`
+    ///   - Without description: `{Date}_{###}.{ext}`
+    ///
+    /// The underscore separator before the description is only included when
+    /// the file has a non-empty description, avoiding trailing underscores
+    /// on descriptionless files.
     ///
     /// Date source priority:
     ///   1. `CreateDate` — available on images (EXIF:CreateDate) and
@@ -563,23 +568,23 @@ enum ExifToolService {
             return RenameResult(success: false, output: error, pathMapping: [:])
         }
 
-        let descriptionExpr = #"${Description;if($_){s/'\''//g;s/[^\p{L}\p{N}]+/_/g;s/^_+|_+$//g}}"#
+        let descriptionExpr = #"${Description;if($_){s/'\''//g;s/[^\p{L}\p{N}]+/_/g;s/^_+|_+$//g;$_="_ ".$_}}"#
         let dateFmt = ["-d", "%Y_%m_%d_%H%M"]
         let fileArgs = urls.map(\.path)
 
         // Pass 1: Rename files that have CreateDate (images + QuickTime videos)
-        let createDateExpr = #"-FileName<${CreateDate}_%03.c_"# + descriptionExpr + #".%e"#
+        let createDateExpr = #"-FileName<${CreateDate}_%03.c"# + descriptionExpr + #".%e"#
         let pass1 = runWriteTool(with: ["-v", "-m", "-if", "$CreateDate", createDateExpr] + dateFmt + fileArgs)
 
         // Pass 2: Rename remaining files without CreateDate using DateTimeOriginal
         // (e.g. AVI/RIFF containers which only have RIFF:DateTimeOriginal)
-        let dtoExpr = #"-FileName<${DateTimeOriginal}_%03.c_"# + descriptionExpr + #".%e"#
+        let dtoExpr = #"-FileName<${DateTimeOriginal}_%03.c"# + descriptionExpr + #".%e"#
         let pass2 = runWriteTool(with: ["-v", "-m", "-if", "!$CreateDate&&$DateTimeOriginal", dtoExpr] + dateFmt + fileArgs)
 
         // Pass 3: Rename remaining files without CreateDate or DateTimeOriginal
         // using FileModifyDate (e.g. MPG/MPEG with no embedded date tags).
         // ExifTool's FileModifyDate is always available as it comes from the filesystem.
-        let fmdExpr = #"-FileName<${FileModifyDate}_%03.c_"# + descriptionExpr + #".%e"#
+        let fmdExpr = #"-FileName<${FileModifyDate}_%03.c"# + descriptionExpr + #".%e"#
         let pass3 = runWriteTool(with: ["-v", "-m", "-if", "!$CreateDate&&!$DateTimeOriginal", fmdExpr] + dateFmt + fileArgs)
 
         // Merge results — succeed only if all passes succeeded (either pass may
