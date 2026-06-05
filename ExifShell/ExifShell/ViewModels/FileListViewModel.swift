@@ -741,6 +741,95 @@ class FileListViewModel {
         return formatter
     }()
 
+    // MARK: - Sanitise
+
+    /// Whether sanitise is currently running.
+    var isSanitising = false
+
+    /// Sanitises the currently selected files by normalising date formats,
+    /// propagating dates, clearing offset tags (images), and syncing descriptions.
+    ///
+    /// This fixes files with XMP-style ISO 8601 dates (e.g. `2010-03-27T01:40:19+00:00`)
+    /// that the app's date formatter cannot parse, causing the Offset feature to skip them.
+    ///
+    /// Process:
+    ///   1. Saves any dirty files first so in-memory changes are on disk
+    ///   2. Runs ExifTool sanitise in batches of 80 with live determinate progress
+    ///   3. Re-reads all metadata from disk to refresh the display
+    func sanitiseSelected() {
+        Task { await sanitiseSelectedAsync() }
+    }
+
+    private func sanitiseSelectedAsync() async {
+        let targets = selectedFiles
+        guard !targets.isEmpty else {
+            statusMessage = "No files selected to sanitise."
+            return
+        }
+
+        guard !isSanitising else { return }
+
+        // Save any dirty files first
+        if dirtyCount > 0 {
+            let saveSucceeded = await saveAllAsync()
+            if !saveSucceeded { return }
+        }
+
+        // Filter out unwritable videos (AVI, MPEG — ExifTool can't write to these)
+        let writableTargets = targets.filter { !ExifToolService.isUnwritableVideo($0.url) }
+        let skippedCount = targets.count - writableTargets.count
+
+        guard !writableTargets.isEmpty else {
+            statusMessage = "ExifTool cannot write to AVI/MPEG containers. No files to sanitise."
+            return
+        }
+
+        isSanitising = true
+        let messageBase = skippedCount > 0
+            ? "Sanitising \(writableTargets.count) file(s) (skipping \(skippedCount) unwritable)..."
+            : "Sanitising \(writableTargets.count) file(s)..."
+        beginOperation(message: messageBase, determinate: true)
+
+        let writableURLs = writableTargets.map(\.url)
+        let chunks = stride(from: 0, to: writableURLs.count, by: metadataBatchSize).map { start in
+            Array(writableURLs[start..<min(start + metadataBatchSize, writableURLs.count)])
+        }
+        let totalChunks = chunks.count
+
+        var allSucceeded = true
+        var lastError: String?
+
+        for (index, chunk) in chunks.enumerated() {
+            let result = await runBackground { ExifToolService.sanitise(chunk) }
+            let progress = Double(index + 1) / Double(totalChunks)
+            updateOperation(progress: progress, message: "Sanitising (\(index + 1)/\(totalChunks))...")
+
+            if !result.success {
+                allSucceeded = false
+                lastError = result.output
+                break
+            }
+        }
+
+        // Re-read metadata so display is refreshed with sanitised values
+        let allURLs = writableTargets.map(\.url)
+        let freshMetadata = await loadMetadata(for: allURLs)
+        applyMetadata(freshMetadata, to: writableTargets)
+
+        let suffix = skippedCount > 0 ? " ⚠️ \(skippedCount) file(s) skipped (unwritable format)." : ""
+
+        if allSucceeded {
+            endOperation(successMessage: "✅ Sanitised \(writableTargets.count) file(s).\(suffix)")
+            lastErrorDetail = nil
+        } else {
+            let errorMsg = lastError ?? "unknown error"
+            endOperation(successMessage: "❌ Sanitise failed: \(errorMsg)\(suffix)")
+            lastErrorDetail = errorMsg
+        }
+
+        isSanitising = false
+    }
+
     // MARK: - Rename
 
     /// Whether rename is currently running.

@@ -267,6 +267,31 @@ struct PreviewPanel: View {
                         .buttonStyle(.bordered)
                         .controlSize(.regular)
 
+                        // Sanitise button
+                        Button {
+                            viewModel.sanitiseSelected()
+                        } label: {
+                            HStack(spacing: 6) {
+                                if viewModel.isSanitising {
+                                    ProgressView()
+                                        .scaleEffect(0.7)
+                                        .controlSize(.small)
+                                }
+                                Image(systemName: viewModel.isSanitising
+                                    ? "wand.and.stars"
+                                    : "wand.and.rays")
+                                    .symbolEffect(.bounce, value: viewModel.isSanitising)
+                                    .symbolEffect(.pulse, isActive: viewModel.isSanitising)
+                                Text(viewModel.isSanitising
+                                     ? "Sanitising..."
+                                     : "Sanitise Selected")
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .disabled(viewModel.isSanitising || viewModel.selectedFiles.isEmpty)
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
+
                         // Status
                         if let status = viewModel.statusMessage {
                             HStack(spacing: 6) {

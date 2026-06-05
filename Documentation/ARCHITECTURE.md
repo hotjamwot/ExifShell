@@ -103,6 +103,7 @@ Sources/
 - **Write (description):** Calls `exiftool -overwrite_original -Description="<value>" -ImageDescription="<value>" -Caption-Abstract="<value>" <files...>` — writes the same value to all three description-related tags in one call.
 - Supports batch writes: accepts `[URL]` so multiple files with the same value are sent in a single process invocation.
 - Returns a `WriteResult` struct with `success: Bool` and `output: String` (captured stdout/stderr for error reporting).
+- **Write exit codes:** `runWriteTool` treats ExifTool exit code 1 as success. All write operations use `-m` (ignore minor errors), which causes ExifTool to exit with code 1 for minor warnings even when all writes succeeded. Code 2+ is treated as a real failure.
 - **Rename (3-pass):** `renameFiles(_ urls:)` uses three ExifTool passes: Pass 1 uses `${CreateDate}`, Pass 2 falls back to `${DateTimeOriginal}`, Pass 3 uses `${FileModifyDate}` for files with no embedded date tags (MPG/MPEG).
 - All metadata logic is delegated to ExifTool.
 
@@ -124,7 +125,7 @@ Sources/
   3. Groups dirty description files by value → `writeDescription()` per group.
   4. Only marks a file clean if ALL its field writes succeeded.
   5. Updates independent feedback for date and description saves.
-- `sanitiseAll()` — saves dirty files first, then processes files in **batches of 80** with live determinate progress (`"Sanitising (X/Y)..."`), then re-reads all metadata from disk to refresh the display.
+- `sanitiseSelected()` — operates on the **currently selected files** (`selectedFiles`). Saves dirty files first, then processes files in **batches of 80** with live determinate progress (`"Sanitising (X/Y)..."`), skips unwritable formats (AVI, MPEG) with a warning, then re-reads all metadata from disk to refresh the display.
 - `renameAll()` — saves dirty files first, then processes files in **batches of 80** with live determinate progress (`"Renaming (X/Y)..."`), updates the in-memory URL for renamed files via the ExifTool path mapping. Uses three ExifTool passes: Pass 1 renames files with `CreateDate` (images + QuickTime videos) via `${CreateDate}`, Pass 2 falls back to `${DateTimeOriginal}` for files without CreateDate (AVI/RIFF containers), Pass 3 uses `${FileModifyDate}` for files with no embedded date tags at all (MPG/MPEG).
 
 ### DropZoneView
@@ -132,12 +133,14 @@ Sources/
 - All drag-and-drop handling is at the `ContentView` level so it works in all states.
 
 ### FileTableView
-- SwiftUI `List` (not `Table` — `List` gives reliable bindings with `@Observable`).
+- Wraps an `NSTableView` via `NSViewRepresentable` for native column resizing, scroll, and sort indicators.
 - Uses `Set<ImageFile.ID>` for `selection`, enabling multi-select via ⌘+click.
-- Uses `@Bindable` to create a `$binding` for each file's `dateTimeOriginal` and `description`.- **Sortable headers:** Filename, DateTimeOriginal, and Description headers are clickable and maintain `sortKey` / `sortAscending` state.
-- **Compact header:** Reduced header padding and constrained height so the header is a small bar.- **Orange text:** Both the DateTimeOriginal and Description `TextField` use `.foregroundColor(isDirty ? .orange : .primary)` to clearly indicate unsaved changes.
-- **Three columns:** Filename | DateTimeOriginal (editable) | Description (editable).
-- Selection syncs to both `viewModel.selectedFile` (preview) and `viewModel.selectedFiles` (bulk edit) via `onChange(of: selectedIDs)`.
+- Body reads `viewModel.sortedFiles` as an observation dependency — this causes SwiftUI to re-invoke `updateNSView` → `tableView.reloadData()` whenever `invalidateSort()` is called (on any data mutation, including bulk edits).
+- **Sortable headers:** Filename, DateTimeOriginal, and Description columns are clickable with native sort indicator arrows. Sort state syncs to `viewModel.sortKey` / `viewModel.sortAscending`.
+- **Orange text:** Editable cells use `.textColor = dirty ? .orange : .labelColor` to visually indicate unsaved changes.
+- **Three columns:** Filename (read-only) | DateTimeOriginal (editable) | Description (editable).
+- Selection syncs to both `viewModel.selectedFile` (preview) and `viewModel.selectedFiles` (bulk edit).
+- Cells are dequeued/recycled using `NSTableView.makeView(withIdentifier:owner:)` for performance.
 
 ### PreviewPanel
 - Wrapped in `ScrollView` to accommodate all metadata.
@@ -171,7 +174,7 @@ Sources/
 
 1. **Import:** User drops files → `ContentView.onDrop` resolves URLs → ViewModel filters by extension, deduplicates, immediately appends placeholder `ImageFile` entries to the list → reads metadata in batches of 80 via `loadMetadata(for:)` → updates `operationProgress` and `operationMessage` after each batch → populates all fields including date, description, create/modify/file-modify dates, imageDescription, captionAbstract, subject. For files with no embedded date tags (MPG/MPEG), `dateTimeOriginal` is populated from the filesystem `FileModifyDate` as a last resort, with `dateSource` set to `.fileModifyDate`.
 2. **Edit (single):** User clicks into the DateTimeOriginal or Description `TextField` → edits value → binding writes to the `@Observable` model → `didSet` on the respective field marks file dirty → UI auto-updates.
-3. **Edit (bulk):** User selects multiple files (⌘+click) → bulk edit bars appear → types a value → presses Enter or "Apply" → `applyBulkEdit()` or `applyBulkEditDescription()` sets value on selected files.
+3. **Edit (bulk):** User selects multiple files (⌘+click) → bulk edit bars appear → types a value → presses Enter or "Apply" → `applyBulkEdit()` or `applyBulkEditDescription()` sets value on selected files, which calls `invalidateSort()` to trigger a table refresh.
 4. **Review:** Preview panel shows grey (original) → green (proposed) diff for both date and description. Read-only metadata displayed below.
 5. **Save:** User presses `⌘S` → ViewModel groups dirty files by unique values for each field → `writeDateTimeOriginal()` called per date group, `writeDescription()` called per description group → on all-success, `markClean()` resets each file.
 6. **Clear:** User presses `⌘K` → `clearAll()` removes all files, returns to drop zone.
@@ -230,17 +233,33 @@ Or open `Package.swift` in Xcode and run.
 
 ## Sanitise Pipeline
 
-The "Sanitise All" button in the Preview Panel runs a single ExifTool invocation that:
+The "Sanitise Selected" button (in both the purple-tinted Sanitise bar above the file table and the Preview Panel) runs an ExifTool invocation that normalises date formats, propagates dates across all date tags, clears offset time tags (images), and syncs descriptions.
 
+### What it fixes
+
+Files with XMP-style ISO 8601 dates (e.g. `2010-03-27T01:40:19+00:00`) cannot be parsed by the app's `exifDateFormatter` (`yyyy:MM:dd HH:mm:ss`), causing the Offset feature to silently skip them. Sanitise reformats these to proper EXIF/QuickTime format.
+
+### Operations per media type
+
+**Images:**
 1. **Normalises DateTimeOriginal** — reformats to `%Y:%m:%d %H:%M:%S` via `DateFmt`
 2. **Propagates date** — copies DateTimeOriginal → CreateDate, ModifyDate
 3. **Clears offsets** — removes OffsetTime, OffsetTimeOriginal, OffsetTimeDigitized
 4. **Syncs descriptions** — copies Description → ImageDescription, Caption-Abstract
 
-After the sanitise completes, the ViewModel re-reads all metadata from disk so the display is fully refreshed. Dirty state is cleared since the writes went directly to disk.
+**QuickTime Videos (MP4/MOV/M4V):**
+1. **Normalises QuickTime:CreationDate** — reformats to `%Y:%m:%d %H:%M:%S` via `DateFmt`
+2. **Propagates date** — copies QuickTime:CreationDate → CreateDate, ModifyDate
+3. **Syncs descriptions** — copies Description (no offset tags — not applicable)
 
-### ExifTool Command
+**Other Videos (AVI, MKV, etc.):**
+1. **Normalises DateTimeOriginal** — reformats to `%Y:%m:%d %H:%M:%S` via `DateFmt`
+2. **Propagates date** — copies DateTimeOriginal → CreateDate, ModifyDate
+3. **Syncs descriptions** — copies Description
 
+### ExifTool Commands
+
+**Images:**
 ```bash
 exiftool -overwrite_original \
   '-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}' \
@@ -253,7 +272,27 @@ exiftool -overwrite_original \
   '-Caption-Abstract<Description'
 ```
 
-This is exposed via `ExifToolService.sanitise(_ urls:)` and triggered by `FileListViewModel.sanitiseAll()`.
+**QuickTime Videos:**
+```bash
+exiftool -overwrite_original \
+  '-QuickTime:CreationDate<${QuickTime:CreationDate;DateFmt("%Y:%m:%d %H:%M:%S")}' \
+  '-CreateDate<QuickTime:CreationDate' \
+  '-ModifyDate<QuickTime:CreationDate' \
+  '-Description<Description'
+```
+
+**Other Videos:**
+```bash
+exiftool -overwrite_original \
+  '-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}' \
+  '-CreateDate<DateTimeOriginal' \
+  '-ModifyDate<DateTimeOriginal' \
+  '-Description<Description'
+```
+
+This is exposed via `ExifToolService.sanitise(_ urls:)` and triggered by `FileListViewModel.sanitiseSelected()`. The "Sanitise Selected" button appears in:
+- A **purple-tinted bar** in ContentView above the file table (visible when any file is selected)
+- A **"Sanitise Selected" button** in PreviewPanel alongside Save and Rename
 
 ## Delete / Remove Files
 

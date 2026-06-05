@@ -82,6 +82,8 @@ static func writeDescription(_ value: String, to urls: [URL]) -> WriteResult {
 - **Path:** Use the static `exifToolPath` property, **not** `/usr/bin/env` (which breaks in Xcode).
 - **Tag group:** Always use explicit group specifiers like `-EXIF:DateTimeOriginal=` for images, `-QuickTime:CreationDate=` for videos.
 - **Mixed batches:** Use `splitByMediaType(_:)` to separate images from videos before write/sanitise operations.
+- **Write exit codes:** `runWriteTool` treats exit code 1 as success because all write operations use `-m` (ignore minor errors). ExifTool exits with code 1 for minor warnings even when writes succeed — treating it as failure produces false error messages.
+- **Read exit codes:** `runReadTool` treats non-empty stdout as success regardless of exit code, since ExifTool can emit valid JSON alongside warning exit codes.
 
 ---
 
@@ -121,6 +123,9 @@ If not found, `missingToolError` returns a descriptive message and all read/writ
 ### Full Metadata Batch Read
 `ExifToolService.readAllMetadata(from:)` processes all files in a single process invocation, reading 14 tags at once (including `FileModifyDate` for the filesystem fallback). This is used for initial import. Returns `FileMetadata` with a `dateSource: DateSource?` field indicating which tag provided the `dateTimeOriginal` value (`.dateTimeOriginal`, `.createDate`, or `.fileModifyDate`). Includes video-specific fields: Duration, ImageWidth, ImageHeight.
 
+### Table Refresh from Bulk Edits
+The file table uses a cached `sortedFiles` property in the ViewModel. Bulk edit methods (`applyBulkEditDescription`, `applyBulkSet`, `applyBulkOffset`, `copyDateFieldToDateTimeOriginal`) call `invalidateSort()` after modifying file values to trigger a table refresh. The `FileTableView.body` reads `viewModel.sortedFiles` so SwiftUI observes `_sortVersion` changes and re-invokes `updateNSView` → `tableView.reloadData()`.
+
 ### Media Type Detection
 Media type is determined from file extension:
 - `FileListViewModel.mediaType(for:)` returns `.image` or `.video`
@@ -141,9 +146,13 @@ Media type is determined from file extension:
 
 ### Sanitise Pipeline
 - `ExifToolService.sanitise(_ urls:)` runs the full sanitise in one ExifTool invocation per media type:
-  - **Images**: Normalises DateTimeOriginal format via `DateFmt`, propagates to CreateDate/ModifyDate, clears OffsetTime* tags, syncs Description to ImageDescription/Caption-Abstract
-  - **Videos**: Normalises QuickTime:CreationDate via `DateFmt`, propagates to CreateDate/ModifyDate, syncs Description (no offset tags)
-- `FileListViewModel.sanitiseAll()` first saves any dirty files, then processes files in **batches of 80** with live determinate progress (`"Sanitising (X/Y)..."`), then re-reads all metadata from disk to refresh the display.
+  - **Images**: Normalises DateTimeOriginal format via `DateFmt("%Y:%m:%d %H:%M:%S")`, propagates to CreateDate/ModifyDate, clears OffsetTime* tags, syncs Description to ImageDescription/Caption-Abstract
+  - **QuickTime Videos**: Normalises QuickTime:CreationDate via `DateFmt`, propagates to CreateDate/ModifyDate, syncs Description (no offset tags)
+  - **Other Videos (AVI, MKV, etc.)**: Normalises DateTimeOriginal via `DateFmt`, propagates to CreateDate/ModifyDate, syncs Description
+- `FileListViewModel.sanitiseSelected()` operates on the **currently selected files** (from `selectedFiles`). It first saves any dirty files, then processes files in **batches of 80** with live determinate progress (`"Sanitising (X/Y)..."`), then re-reads all metadata from disk to refresh the display. Skips unwritable formats (AVI, MPEG) with a warning.
+- The "Sanitise Selected" button appears in two places:
+  - A **purple-tinted bar** in ContentView above the file table (visible when any file is selected)
+  - A **"Sanitise Selected" button** in PreviewPanel alongside Save and Rename, using the `wand.and.rays` SF Symbol
 
 ### Rename Pipeline
 - `ExifToolService.renameFiles(_ urls:)` renames files to `{Date}_{###}_{Description}.{ext}` using three ExifTool passes:

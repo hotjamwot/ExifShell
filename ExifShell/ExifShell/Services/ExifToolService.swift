@@ -548,6 +548,102 @@ enum ExifToolService {
         return WriteResult(success: allSucceeded || anyEmpty, output: combined)
     }
 
+    // MARK: - Sanitise
+
+    /// Sanitises files by normalising date formats to proper EXIF/QuickTime
+    /// format (`YYYY:MM:DD HH:MM:SS`), propagating dates across all date tags,
+    /// clearing offset time tags (images), and syncing descriptions.
+    ///
+    /// This is designed for files that have XMP-style ISO 8601 dates
+    /// (e.g. `2010-03-27T01:40:19+00:00`) which the app's date formatter
+    /// cannot parse, causing the Offset feature to skip them silently.
+    ///
+    /// **For images:**
+    ///   - Normalises DateTimeOriginal via `DateFmt`
+    ///   - Propagates to CreateDate, ModifyDate
+    ///   - Clears OffsetTime, OffsetTimeOriginal, OffsetTimeDigitized
+    ///   - Syncs Description → ImageDescription, Caption-Abstract
+    ///
+    /// **For videos:**
+    ///   - Normalises QuickTime:CreationDate via `DateFmt`
+    ///   - Propagates to CreateDate, ModifyDate
+    ///   - Syncs Description (no offset tags — not applicable)
+    ///
+    /// - Parameter urls: The file URLs to sanitise.
+    /// - Returns: A WriteResult with success status and captured output/error.
+    static func sanitise(_ urls: [URL]) -> WriteResult {
+        guard !urls.isEmpty else {
+            return WriteResult(success: false, output: "No files provided.")
+        }
+        if let error = missingToolError {
+            return WriteResult(success: false, output: error)
+        }
+
+        let (imageURLs, quickTimeURLs, otherVideoURLs) = splitByMediaType(urls)
+        let allVideoURLs = quickTimeURLs + otherVideoURLs
+        var allSucceeded = true
+        var outputs: [String] = []
+
+        if !imageURLs.isEmpty {
+            // Images: normalise DateTimeOriginal via DateFmt, propagate to
+            // CreateDate/ModifyDate, clear offset tags, sync descriptions.
+            let args: [String] = [
+                "-overwrite_original",
+                "-m",
+                #"-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}"#,
+                "-CreateDate<DateTimeOriginal",
+                "-ModifyDate<DateTimeOriginal",
+                "-OffsetTime=",
+                "-OffsetTimeOriginal=",
+                "-OffsetTimeDigitized=",
+                "-ImageDescription<Description",
+                "-Caption-Abstract<Description"
+            ] + imageURLs.map(\.path)
+            let result = runWriteTool(with: args)
+            if !result.success { allSucceeded = false }
+            if !result.output.isEmpty { outputs.append(result.output) }
+        }
+
+        if !allVideoURLs.isEmpty {
+            // Videos: normalise QuickTime:CreationDate via DateFmt, propagate
+            // to CreateDate/ModifyDate, sync Description.
+            // For QuickTime videos, use QuickTime:CreationDate as source.
+            // For other videos (AVI, MKV), use DateTimeOriginal as source.
+            if !quickTimeURLs.isEmpty {
+                let args: [String] = [
+                    "-overwrite_original",
+                    "-m",
+                    #"-QuickTime:CreationDate<${QuickTime:CreationDate;DateFmt("%Y:%m:%d %H:%M:%S")}"#,
+                    "-CreateDate<QuickTime:CreationDate",
+                    "-ModifyDate<QuickTime:CreationDate",
+                    "-Description<Description"
+                ] + quickTimeURLs.map(\.path)
+                let result = runWriteTool(with: args)
+                if !result.success { allSucceeded = false }
+                if !result.output.isEmpty { outputs.append(result.output) }
+            }
+            if !otherVideoURLs.isEmpty {
+                let args: [String] = [
+                    "-overwrite_original",
+                    "-m",
+                    #"-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}"#,
+                    "-CreateDate<DateTimeOriginal",
+                    "-ModifyDate<DateTimeOriginal",
+                    "-Description<Description"
+                ] + otherVideoURLs.map(\.path)
+                let result = runWriteTool(with: args)
+                if !result.success { allSucceeded = false }
+                if !result.output.isEmpty { outputs.append(result.output) }
+            }
+        }
+
+        let combined = outputs.joined(separator: "\n")
+        let anyEmpty = imageURLs.isEmpty && allVideoURLs.isEmpty
+        return WriteResult(success: allSucceeded || anyEmpty, output: combined)
+    }
+
+    // MARK: - Rename
+
     /// Result of a rename operation, including a mapping of old path → new path.
     struct RenameResult {
         let success: Bool

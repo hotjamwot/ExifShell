@@ -52,6 +52,11 @@ struct ContentView: View {
                             bulkEditBar
                             Divider()
                             bulkEditDescriptionBar
+                            Divider()
+                            sanitiseBar
+                        } else if !viewModel.selectedFiles.isEmpty {
+                            // Sanitise bar also visible for single selection
+                            sanitiseBar
                         }
 
                         FileTableView(viewModel: viewModel)
@@ -272,6 +277,47 @@ struct ContentView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .background(Color.green.opacity(0.06))
+    }
+
+    // MARK: - Sanitise Bar
+
+    @ViewBuilder
+    private var sanitiseBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: viewModel.isSanitising
+                ? "wand.and.stars"
+                : "wand.and.rays")
+                .foregroundColor(.secondary)
+                .font(.caption)
+
+            Text("Sanitise \(viewModel.selectedFiles.count) selected file(s) — normalises date formats, propagates dates & descriptions")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            Spacer()
+
+            Button {
+                viewModel.sanitiseSelected()
+            } label: {
+                HStack(spacing: 4) {
+                    if viewModel.isSanitising {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                            .controlSize(.small)
+                    }
+                    Image(systemName: viewModel.isSanitising
+                        ? "wand.and.stars"
+                        : "wand.and.rays")
+                    Text(viewModel.isSanitising ? "Sanitising..." : "Sanitise")
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(viewModel.isSanitising)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color.purple.opacity(0.06))
     }
 
     // MARK: - Drop Handling
