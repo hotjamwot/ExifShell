@@ -24,8 +24,8 @@ All state management uses Apple's `@Observable` macro (macOS 14+ Observation fra
 │ (editable List   │     │ (Thumbnail + Diff   │
 │  with multi-     │     │  for date & desc,   │
 │  select support) │     │  read-only metadata,│
-│  – date column   │     │  Save/Sanitise/     │
-│  – desc column   │     │  Rename buttons)    │
+ │  – date column   │     │  Save/Rename/       │
+ │  – desc column   │     │  Sanitise buttons)  │
 └──────┬──────────┘     └─────────┬───────────┘
        │                          │
        └──────────┬───────────────┘
@@ -42,6 +42,8 @@ All state management uses Apple's `@Observable` macro (macOS 14+ Observation fra
        │  applyBulkOffset()       │  ← bulk offset date by hours/days/months
        │  applyBulkEditDesc()     │  ← bulk set desc
        │  saveAll()               │  ← saves date + desc
+       │  saveSelected()          │  ← saves selected dirty files
+       │  renameSelected()        │  ← renames selected files
        └──────────┬───────────────┘
                   │ calls
        ┌──────────▼───────────────┐
@@ -177,15 +179,17 @@ Sources/
   - Subject (from `Subject`, joined into a string when present).
 - Shows a selection summary when multiple files are selected, and copy actions use each selected file's own source date.
 - **Save feedback:** Two independent badges — "DTO: old → new" for date changes and "Desc: old → new" for description changes. Both clear on navigation.
-- **Single Save button:** One button labelled "Save Changes (N)" showing the dirty count. Disabled when nothing is dirty. Keyboard shortcut: `⌘S`.
-- Also contains "Sanitise Selected" and "Rename All" buttons.
+- **Action buttons** in a 2-column layout:
+  - Row 1: "Save Selected (N)" (bordered) | "Save All (N)" (prominent/blue, `⌘S`)
+  - Row 2: "Rename Selected" (bordered) | "Rename All" (prominent/blue)
+  - Row 3: "Sanitise Selected" (full width, bordered)
+ - "Selected" buttons only appear when files are selected. Disabled when no dirty files (for save) or no selection.
 
 ### ContentView (Root)
 - Manages the empty state (DropZoneView) vs loaded state (HSplitView with table + preview).
 - **Two bulk edit bars** (visible when `viewModel.selectedFiles.count > 1`):
   1. **DateTimeOriginal bar** (accent-tinted): text field + "Apply" button for bulk date editing.
   2. **Description bar** (green-tinted): text field + "Apply" button for bulk description editing.
-- **Sanitise bar** (purple-tinted, visible when any file is selected).
 - **Status bar:** Shows the current `statusMessage` and a `ProgressView` when loading.
 - **Drop handling:** `onDrop(of:)` resolves URLs, separates files from folders, and calls the ViewModel.
 - **App-wide keyboard shortcuts:** Two hidden `.background(Button(...).keyboardShortcut(...))` modifiers:
@@ -264,7 +268,7 @@ Or open `Package.swift` in Xcode and run.
 
 ## Sanitise Pipeline
 
-The "Sanitise Selected" button (in both the purple-tinted Sanitise bar above the file table and the Preview Panel) runs an ExifTool invocation that normalises date formats, propagates dates across all date tags, clears offset time tags (images), and syncs descriptions.
+The "Sanitise Selected" button in the Preview Panel runs an ExifTool invocation that normalises date formats, propagates dates across all date tags, clears offset time tags (images), and syncs descriptions.
 
 ### What it fixes
 
@@ -321,9 +325,7 @@ exiftool -overwrite_original \
   '-Description<Description'
 ```
 
-This is exposed via `ExifToolService.sanitise(_ urls:)` and triggered by `FileListViewModel.sanitiseSelected()`. The "Sanitise Selected" button appears in:
-- A **purple-tinted bar** in ContentView above the file table (visible when any file is selected)
-- A **"Sanitise Selected" button** in PreviewPanel alongside Save and Rename
+This is exposed via `ExifToolService.sanitise(_ urls:)` and triggered by `FileListViewModel.sanitiseSelected()`. The "Sanitise Selected" button appears in the PreviewPanel alongside Save and Rename buttons.
 
 ## Delete / Remove Files
 

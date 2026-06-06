@@ -222,53 +222,95 @@ struct PreviewPanel: View {
                             .padding(.bottom, 8)
                         }
 
-                        // Save button
-                        Button {
-                            viewModel.saveAll()
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: viewModel.isSaving
-                                    ? "square.and.arrow.down.on.square"
-                                    : (viewModel.dirtyCount > 0 ? "square.and.arrow.down.badge.clock" : "square.and.arrow.down"))
-                                    .symbolEffect(.bounce, value: isSaveAnimating)
-                                    .symbolEffect(.pulse, isActive: viewModel.isSaving)
-                                Text(viewModel.dirtyCount > 0
-                                     ? "Save Changes (\(viewModel.dirtyCount))"
-                                     : "Save Changes")
-                            }
-                            .frame(maxWidth: .infinity)
-                        }
-                        .keyboardShortcut("s", modifiers: .command)
-                        .disabled(viewModel.dirtyCount == 0 || viewModel.isSaving)
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.regular)
-
-                        // Rename button
-                        Button {
-                            viewModel.renameAll()
-                        } label: {
-                            HStack(spacing: 6) {
-                                if viewModel.isRenaming {
-                                    ProgressView()
-                                        .scaleEffect(0.7)
-                                        .controlSize(.small)
+                        // Save row: Save Selected | Save All
+                        HStack(spacing: 8) {
+                            Button {
+                                viewModel.saveSelected()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if viewModel.isSaving {
+                                        ProgressView()
+                                            .scaleEffect(0.7)
+                                            .controlSize(.small)
+                                    }
+                                    Image(systemName: "square.and.arrow.down")
+                                    Text(viewModel.selectedDirtyCount > 0
+                                         ? "Save Selected (\(viewModel.selectedDirtyCount))"
+                                         : "Save Selected")
                                 }
-                                Image(systemName: viewModel.isRenaming
-                                    ? "pencil.and.list.clipboard"
-                                    : "pencil.and.list.clipboard")
-                                    .symbolEffect(.bounce, value: viewModel.isRenaming)
-                                    .symbolEffect(.pulse, isActive: viewModel.isRenaming)
-                                Text(viewModel.isRenaming
-                                     ? "Renaming..."
-                                     : "Rename All")
+                                .frame(maxWidth: .infinity)
                             }
-                            .frame(maxWidth: .infinity)
-                        }
-                        .disabled(viewModel.isRenaming)
-                        .buttonStyle(.bordered)
-                        .controlSize(.regular)
+                            .disabled(viewModel.selectedDirtyCount == 0 || viewModel.isSaving)
+                            .buttonStyle(.bordered)
+                            .controlSize(.regular)
 
-                        // Sanitise button
+                            Button {
+                                viewModel.saveAll()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: viewModel.isSaving
+                                        ? "square.and.arrow.down.on.square"
+                                        : (viewModel.dirtyCount > 0 ? "square.and.arrow.down.badge.clock" : "square.and.arrow.down"))
+                                        .symbolEffect(.bounce, value: isSaveAnimating)
+                                        .symbolEffect(.pulse, isActive: viewModel.isSaving)
+                                    Text(viewModel.dirtyCount > 0
+                                         ? "Save All (\(viewModel.dirtyCount))"
+                                         : "Save All")
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
+                            .keyboardShortcut("s", modifiers: .command)
+                            .disabled(viewModel.dirtyCount == 0 || viewModel.isSaving)
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.regular)
+                        }
+
+                        // Rename row: Rename Selected | Rename All
+                        HStack(spacing: 8) {
+                            Button {
+                                viewModel.renameSelected()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if viewModel.isRenaming {
+                                        ProgressView()
+                                            .scaleEffect(0.7)
+                                            .controlSize(.small)
+                                    }
+                                    Image(systemName: "pencil.and.list.clipboard")
+                                    Text(viewModel.isRenaming
+                                         ? "Renaming..."
+                                         : "Rename Selected")
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
+                            .disabled(viewModel.isRenaming)
+                            .buttonStyle(.bordered)
+                            .controlSize(.regular)
+
+                            Button {
+                                viewModel.renameAll()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if viewModel.isRenaming {
+                                        ProgressView()
+                                            .scaleEffect(0.7)
+                                            .controlSize(.small)
+                                    }
+                                    Image(systemName: "pencil.and.list.clipboard")
+                                        .symbolEffect(.bounce, value: viewModel.isRenaming)
+                                        .symbolEffect(.pulse, isActive: viewModel.isRenaming)
+                                    Text(viewModel.isRenaming
+                                         ? "Renaming..."
+                                         : "Rename All")
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
+                            .disabled(viewModel.isRenaming)
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.regular)
+                        }
+
+                        // Sanitise row (full width)
                         Button {
                             viewModel.sanitiseSelected()
                         } label: {

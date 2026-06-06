@@ -28,7 +28,7 @@ For images, `DateTimeOriginal` maps to `EXIF:DateTimeOriginal`; for QuickTime vi
 | `Sources/Services/ExifToolService+Rename.swift` | Extension on `ExifToolService` containing all rename-related functionality. Declares `RenameResult`, `RenameInput`, `renameFiles()`, `renameWritableFiles()` (ExifTool-based with pre-sorted tag passes), `renameUnwritableFiles()` (FileManager-based for AVI/MPEG), `detectTagCategories()` (single ExifTool read to classify files), `computeExpectedRenameURL()` (fallback path computation), `parseRenamedPaths()` (regex for `-v` output), `DateTagCategory` enum, and date/description formatters. |
 | `Sources/Views/DropZoneView.swift` | Visual drop zone (drop handling in ContentView). |
 | `Sources/Views/FileTableView.swift` | SwiftUI `List` with multi-select (`Set<ImageFile.ID>`), editable date + description columns, orange text when dirty, sortable headers. |
-| `Sources/Views/PreviewPanel.swift` | Thumbnail + diff review (date & description) + read-only metadata display + Save / Sanitise All / Rename All buttons. Shows video badges (media type badge, duration, resolution) for `.video` files. Date/Time Original row shows a source badge (EXIF / CreateDate / File System) indicating where the date value came from. |
+ | `Sources/Views/PreviewPanel.swift` | Thumbnail + diff review (date & description) + read-only metadata display. Action buttons in 2-column layout: Save Selected/All, Rename Selected/All, Sanitise Selected. Shows video badges (media type badge, duration, resolution) for `.video` files. Date/Time Original row shows a source badge (EXIF / CreateDate / File System) indicating where the date value came from. |
 
 ---
 
@@ -152,9 +152,7 @@ Media type is determined from file extension:
   - **QuickTime Videos**: Normalises QuickTime:CreationDate via `DateFmt`, propagates to CreateDate/ModifyDate, syncs Description (no offset tags)
   - **Other Videos (AVI, MKV, etc.)**: Normalises DateTimeOriginal via `DateFmt`, propagates to CreateDate/ModifyDate, syncs Description
 - `FileListViewModel.sanitiseSelected()` operates on the **currently selected files** (from `selectedFiles`). It first saves any dirty files, then processes files in **batches of 80** with live determinate progress (`"Sanitising (X/Y)..."`), then re-reads all metadata from disk to refresh the display. Skips unwritable formats (AVI, MPEG) with a warning.
-- The "Sanitise Selected" button appears in two places:
-  - A **purple-tinted bar** in ContentView above the file table (visible when any file is selected)
-  - A **"Sanitise Selected" button** in PreviewPanel alongside Save and Rename, using the `wand.and.rays` SF Symbol
+ - The "Sanitise Selected" button appears in the PreviewPanel alongside Save and Rename buttons, using the `wand.and.rays` SF Symbol.
 
 ### Rename Pipeline
 - Rename logic lives in `ExifToolService+Rename.swift` as an extension on `ExifToolService`.
@@ -183,11 +181,14 @@ Media type is determined from file extension:
 - Table shows orange text for dirty files
 - Preview shows grey old → green proposed diff for both date and description
 
-### Save Logic (Single Button)
-- One "Save Changes (N)" button in PreviewPanel + app-wide ⌘S shortcut
-- Independently groups date-changed files by value and desc-changed files by value for batch writes
-- Tracks separate save feedback for date and description
-- Feedback clears on navigation via `selectedFile.didSet`
+ ### Save & Rename Logic (Selected vs All)
+ - PreviewPanel has a 2-column button layout: "Save Selected (N)" | "Save All (N)" and "Rename Selected" | "Rename All", plus "Sanitise Selected" full width
+ - `saveAll()` / `saveSelected()` — both use `saveAllAsync(only:)` with an optional file list parameter. When `only` is provided, only those files are considered.
+ - `renameAll()` / `renameSelected()` — both use `renameAllAsync(only:)` with the same pattern
+ - Independently groups date-changed files by value and desc-changed files by value for batch writes
+ - Tracks separate save feedback for date and description
+ - Feedback clears on navigation via `selectedFile.didSet`
+ - App-wide `⌘S` shortcut is bound to `saveAll()`
 
 ---
 

@@ -533,6 +533,9 @@ class FileListViewModel {
     /// The number of files with unsaved changes.
     var dirtyCount: Int { files.filter(\.isDirty).count }
 
+    /// The number of selected files with unsaved changes.
+    var selectedDirtyCount: Int { selectedFiles.filter(\.isDirty).count }
+
     /// Saves all dirty files in batch — groups by distinct field values
     /// so that files with the same edits are written together.
     ///
@@ -545,8 +548,15 @@ class FileListViewModel {
         Task { await saveAllAsync() }
     }
 
-    private func saveAllAsync() async -> Bool {
-        let dirtyFiles = files.filter(\.isDirty)
+    /// Saves dirty files among the current selection.
+    func saveSelected() {
+        Task { await saveAllAsync(only: selectedFiles) }
+    }
+
+    /// Saves dirty files. When `only` is provided, only those files are
+    /// considered (used by sanitise to avoid saving unrelated dirty files).
+    private func saveAllAsync(only: [ImageFile]? = nil) async -> Bool {
+        let dirtyFiles = (only ?? files).filter(\.isDirty)
         guard !dirtyFiles.isEmpty else {
             statusMessage = "No changes to save."
             return true
@@ -776,9 +786,11 @@ class FileListViewModel {
 
         guard !isSanitising else { return }
 
-        // Save any dirty files first
-        if dirtyCount > 0 {
-            let saveSucceeded = await saveAllAsync()
+        // Save only the dirty files among the targets — avoid saving
+        // unrelated dirty files which would reset their dirty state.
+        let dirtyTargets = targets.filter(\.isDirty)
+        if !dirtyTargets.isEmpty {
+            let saveSucceeded = await saveAllAsync(only: dirtyTargets)
             if !saveSucceeded { return }
         }
 
@@ -854,27 +866,35 @@ class FileListViewModel {
         Task { await renameAllAsync() }
     }
 
-    private func renameAllAsync() async {
-        guard !files.isEmpty else {
+    /// Renames only the currently selected files.
+    func renameSelected() {
+        Task { await renameAllAsync(only: selectedFiles) }
+    }
+
+    /// Renames files. When `only` is provided, only those files are renamed.
+    private func renameAllAsync(only: [ImageFile]? = nil) async {
+        let targets = only ?? files
+        guard !targets.isEmpty else {
             statusMessage = "No files to rename."
             return
         }
 
         guard !isRenaming else { return }
 
-        // Save any unsaved changes first so we rename with the latest metadata values
-        if dirtyCount > 0 {
-            let saveSucceeded = await saveAllAsync()
+        // Save any unsaved changes among the targets first
+        let dirtyTargets = targets.filter(\.isDirty)
+        if !dirtyTargets.isEmpty {
+            let saveSucceeded = await saveAllAsync(only: dirtyTargets)
             if !saveSucceeded {
                 return
             }
         }
 
         isRenaming = true
-        beginOperation(message: "Renaming \(files.count) file(s)...", determinate: true)
+        beginOperation(message: "Renaming \(targets.count) file(s)...", determinate: true)
         clearFeedback()
 
-        let allInputs = files.map { file in
+        let allInputs = targets.map { file in
             ExifToolService.RenameInput(
                 url: file.url,
                 dateTimeOriginal: file.dateTimeOriginal,
