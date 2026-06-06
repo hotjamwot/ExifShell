@@ -24,8 +24,8 @@ All state management uses Apple's `@Observable` macro (macOS 14+ Observation fra
 │ (editable List   │     │ (Thumbnail + Diff   │
 │  with multi-     │     │  for date & desc,   │
 │  select support) │     │  read-only metadata,│
-│  – date column   │     │  single Save btn)   │
-│  – desc column   │     │                     │
+│  – date column   │     │  Save/Sanitise/     │
+│  – desc column   │     │  Rename buttons)    │
 └──────┬──────────┘     └─────────┬───────────┘
        │                          │
        └──────────┬───────────────┘
@@ -45,12 +45,23 @@ All state management uses Apple's `@Observable` macro (macOS 14+ Observation fra
        └──────────┬───────────────┘
                   │ calls
        ┌──────────▼───────────────┐
-       │     ExifToolService       │
+       │     ExifToolService       │  (core)
        │  readAllMetadata()       │  ← batch full read
        │  readDateTimeOriginal()  │  ← single or batch
        │  writeDateTimeOriginal() │  ← batch write date
        │  writeDescription()      │  ← batch write desc
+       │  sanitise()              │  ← full sanitise pipeline
        │  + exifToolPath          │  ← auto-resolved
+       │  + runReadTool/WriteTool │  ← shared process runners
+       └──────────┬───────────────┘
+                  │
+       ┌──────────▼───────────────┐
+       │  ExifToolService+Rename  │  (extension)
+       │  renameFiles()           │  ← entry point
+       │  renameWritableFiles()   │  ← ExifTool-based (tag pre-sorted)
+       │  renameUnwritableFiles() │  ← FileManager-based (AVI/MPEG)
+       │  detectTagCategories()   │  ← single read, classify files
+       │  + RenameInput/Result    │  ← public types
        └──────────┬───────────────┘
                   │ spawns process
        ┌──────────▼───────────────┐
@@ -70,11 +81,12 @@ Sources/
 ├── ViewModels/
 │   └── FileListViewModel.swift # @Observable class: state, import (batch full read), save, bulk edit, clear
 ├── Services/
-│   └── ExifToolService.swift   # Shell wrapper (auto-resolved path, batch reads & writes for date + desc)
+│   ├── ExifToolService.swift   # Core shell wrapper: read/write/sanitise, shared process runners, JSON decoders
+│   └── ExifToolService+Rename.swift  # Rename extension: pre-sorted tag passes, FileManager-based rename for unwritable formats
 └── Views/
     ├── DropZoneView.swift      # Visual drop zone (drop logic in ContentView)
     ├── FileTableView.swift     # List with editable DateTimeOriginal + Description + orange dirty + multi-select
-    └── PreviewPanel.swift      # Thumbnail + diff review (date & desc) + read-only metadata + single Save button
+    └── PreviewPanel.swift      # Thumbnail + diff review (date & desc) + read-only metadata + Save/Rename/Sanitise buttons
 ```
 
 ## Component Responsibilities
@@ -95,17 +107,25 @@ Sources/
 - `markClean()` resets both baselines (originalDateTimeOriginal & originalDescription) and clears the dirty flag.
 - Identifiable (UUID) and Hashable for List selection.
 
-### ExifToolService (Service Layer)
+### ExifToolService (Service Layer — Core)
 - **Path resolution:** Locates `exiftool` at static init time by checking common paths (`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/opt/local/bin`) and falling back to `which exiftool`. This ensures the app works from Terminal, Xcode, or a bundled `.app` regardless of PATH.
 - **Read (full batch):** `readAllMetadata(from:)` — calls `exiftool -json -DateTimeOriginal -CreateDate -ModifyDate -FileModifyDate -Description -ImageDescription -Caption-Abstract -Subject -Keywords -LastKeywordXMP -Duration -ImageWidth -ImageHeight <files...>` once for all files, decodes JSON, returns `[URL: FileMetadata]`. The `FileMetadata` struct includes a `dateSource: DateSource?` field that tracks whether `dateTimeOriginal` came from the embedded tag, `CreateDate`, or the filesystem `FileModifyDate`.
 - **Read (date only batch):** `readDateTimeOriginal(from:)` — legacy method, same pattern but only reads DateTimeOriginal.
-- **Write (date):** Calls `exiftool -overwrite_original -EXIF:DateTimeOriginal="<value>" <file1> <file2> ...` — uses the `EXIF:` group specifier to target the correct EXIF tag.
-- **Write (description):** Calls `exiftool -overwrite_original -Description="<value>" -ImageDescription="<value>" -Caption-Abstract="<value>" <files...>` — writes the same value to all three description-related tags in one call.
-- Supports batch writes: accepts `[URL]` so multiple files with the same value are sent in a single process invocation.
-- Returns a `WriteResult` struct with `success: Bool` and `output: String` (captured stdout/stderr for error reporting).
-- **Write exit codes:** `runWriteTool` treats ExifTool exit code 1 as success. All write operations use `-m` (ignore minor errors), which causes ExifTool to exit with code 1 for minor warnings even when all writes succeeded. Code 2+ is treated as a real failure.
-- **Rename (3-pass):** `renameFiles(_ urls:)` uses three ExifTool passes: Pass 1 uses `${CreateDate}`, Pass 2 falls back to `${DateTimeOriginal}`, Pass 3 uses `${FileModifyDate}` for files with no embedded date tags (MPG/MPEG).
-- All metadata logic is delegated to ExifTool.
+- **Write (date):** Splits images/videos via `splitByMediaType`. Images get `-EXIF:DateTimeOriginal=`, `-CreateDate=`, `-ModifyDate=`, and cleared offset tags. QuickTime videos get `-QuickTime:CreationDate=`, `-CreateDate=`, `-ModifyDate=`, `-DateTimeOriginal=`. Other videos get generic `-DateTimeOriginal=`, `-CreateDate=`, `-ModifyDate=`.
+- **Write (description):** Calls `exiftool -overwrite_original -Description="<value>" -ImageDescription="<value>" -Caption-Abstract="<value>" <files...>` for images. Videos only get `-Description=`.
+- **Sanitise:** Normalises date formats via `DateFmt`, propagates across all date tags, clears offset tags (images), syncs descriptions. Operates per media type in a single ExifTool invocation.
+- **Shared infrastructure:** `runReadTool` / `runWriteTool` centralise Process boilerplate. `ReadResult`, `WriteResult` structs for return values. `decoder`, `missingToolError`, `exifToolPath` are all `internal` (default) — accessible across files within the module (needed by the rename extension).
+- **JSON decoding:** `DateTimeFallbackOutput` (public, for rename extension) and `FullExifToolOutput` (private, full metadata read) decode ExifTool's JSON output.
+- **Media type helpers:** `videoExtensions`, `quickTimeExtensions`, `unwritableVideoExtensions`, `splitByMediaType`, `isUnwritableVideo`.
+
+### ExifToolService+Rename (Service Layer — Rename Extension)
+- All rename logic lives in `extension ExifToolService` in a separate file.
+- **`renameFiles(_ inputs:, progressHandler:)`** — public entry point. Accepts `[RenameInput]` (URL + in-memory dateTimeOriginal + description). Splits into writable (ExifTool) vs unwritable (FileManager for AVI/MPEG) paths.
+- **`detectTagCategories()`** — runs a single ExifTool read to classify files by which date tag they have (`CreateDate`, `DateTimeOriginal`, or `FileModifyDate`). This pre-sort eliminates blind passes.
+- **`renameWritableFiles()`** — ExifTool-based rename. Only dispatches ExifTool passes for tag categories that actually exist in the batch. Each pass runs `-v -m "-FileName<${TAG}_%03.c{Description;...}.%e" -d fmt`. Path mappings are extracted from `-v` output via regex and validated against the filesystem. Fallback `computeExpectedRenameURL()` handles files the regex missed.
+- **`renameUnwritableFiles()`** — FileManager-based rename for AVI/MPEG. Generates target filenames in Swift from in-memory metadata, handles collisions with counter incrementing.
+- **Public types:** `RenameResult` (success + output + path mapping), `RenameInput` (url + dateTimeOriginal + description).
+- **Formatters:** `renameInputFormatter`, `renameOutputFormatter`, `formatDateForRename()`, `sanitizeDescriptionForRename()`.
 
 ### FileListViewModel (ViewModel)
 - `@Observable` class with `@MainActor`.
@@ -126,7 +146,7 @@ Sources/
   4. Only marks a file clean if ALL its field writes succeeded.
   5. Updates independent feedback for date and description saves.
 - `sanitiseSelected()` — operates on the **currently selected files** (`selectedFiles`). Saves dirty files first, then processes files in **batches of 80** with live determinate progress (`"Sanitising (X/Y)..."`), skips unwritable formats (AVI, MPEG) with a warning, then re-reads all metadata from disk to refresh the display.
-- `renameAll()` — saves dirty files first, then processes files in **batches of 80** with live determinate progress (`"Renaming (X/Y)..."`), updates the in-memory URL for renamed files via the ExifTool path mapping. Uses three ExifTool passes: Pass 1 renames files with `CreateDate` (images + QuickTime videos) via `${CreateDate}`, Pass 2 falls back to `${DateTimeOriginal}` for files without CreateDate (AVI/RIFF containers), Pass 3 uses `${FileModifyDate}` for files with no embedded date tags at all (MPG/MPEG).
+- `renameAll()` — saves dirty files first, then processes files in **batches of 80** with live determinate progress (`"Renaming (X/Y)..."`), calls `ExifToolService.renameFiles()` with the in-memory metadata content, updates the in-memory URL for each renamed file from the returned path mapping.
 
 ### DropZoneView
 - Purely visual. Shows the empty-state icon and instructions when no files are loaded.
@@ -158,12 +178,14 @@ Sources/
 - Shows a selection summary when multiple files are selected, and copy actions use each selected file's own source date.
 - **Save feedback:** Two independent badges — "DTO: old → new" for date changes and "Desc: old → new" for description changes. Both clear on navigation.
 - **Single Save button:** One button labelled "Save Changes (N)" showing the dirty count. Disabled when nothing is dirty. Keyboard shortcut: `⌘S`.
+- Also contains "Sanitise Selected" and "Rename All" buttons.
 
 ### ContentView (Root)
 - Manages the empty state (DropZoneView) vs loaded state (HSplitView with table + preview).
 - **Two bulk edit bars** (visible when `viewModel.selectedFiles.count > 1`):
   1. **DateTimeOriginal bar** (accent-tinted): text field + "Apply" button for bulk date editing.
   2. **Description bar** (green-tinted): text field + "Apply" button for bulk description editing.
+- **Sanitise bar** (purple-tinted, visible when any file is selected).
 - **Status bar:** Shows the current `statusMessage` and a `ProgressView` when loading.
 - **Drop handling:** `onDrop(of:)` resolves URLs, separates files from folders, and calls the ViewModel.
 - **App-wide keyboard shortcuts:** Two hidden `.background(Button(...).keyboardShortcut(...))` modifiers:
@@ -207,6 +229,15 @@ Using the `@Observable` macro (macOS 14+) instead of `@Published`/`ObservableObj
 
 ### Explicit EXIF Tag Targeting
 Date write commands use `-EXIF:DateTimeOriginal=` rather than `-DateTimeOriginal=`. This prevents ExifTool from writing to related fields (CreateDate, ModifyDate, IPTC date/time fields) when it auto-derives them from the tag name.
+
+### Rename Pre-Sort Optimisation
+Instead of running 3 blind ExifTool passes (filtered by `-if`), `detectTagCategories()` runs a single ExifTool read to classify files by which date tag they have. Then only the needed passes are dispatched. For the common case (all files have CreateDate), this reduces 3 ExifTool launches to 1.
+
+### Rename Path Mapping with Filesystem Validation
+ExifTool's `-v` output is parsed via regex, and each claimed new path is validated with `FileManager.default.fileExists(atPath:)` to discard false positives. For files the regex misses, `computeExpectedRenameURL()` uses in-memory metadata + per-directory counter as a fallback.
+
+### FileManager-based Rename for Unwritable Formats
+AVI and MPEG files cannot be written to by ExifTool. The rename pipeline detects these via `isUnwritableVideo()` and renames them via `FileManager.moveItem()` using in-memory metadata (saved-in-progress DateTimeOriginal and Description values).
 
 ## Dependencies
 

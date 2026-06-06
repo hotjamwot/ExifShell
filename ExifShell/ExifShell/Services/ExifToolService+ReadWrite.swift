@@ -1,0 +1,547 @@
+import Foundation
+
+// ============================================================================
+// ExifToolService + Read/Write
+// ============================================================================
+// Extension containing all read and write metadata operations, plus
+// sanitise. Separated from the core ExifToolService so the main file
+// stays focused on infrastructure (path resolution, process runners,
+// result types).
+//
+// Contains:
+//   - FileMetadata / DateSource        — result types for metadata reads
+//   - readDateTimeOriginal()           — single-file and batch reads
+//   - readAllMetadata()                — full metadata batch read
+//   - writeDateTimeOriginal()          — batch date write (images + videos)
+//   - writeDescription()               — batch description write
+//   - sanitise()                       — normalise date formats
+//   - DateTimeFallbackOutput           — JSON decoder for readDateTimeOriginal
+//   - FullExifToolOutput               — JSON decoder for readAllMetadata
+// ============================================================================
+
+extension ExifToolService {
+
+    // MARK: - FileMetadata / DateSource
+
+    /// A bundle of all metadata fields we care about for a single file.
+    struct FileMetadata {
+        let dateTimeOriginal: String?
+        let createDate: String?
+        let modifyDate: String?
+        let description: String?
+        let imageDescription: String?
+        let captionAbstract: String?
+        let subject: String?
+        let keywords: String?
+        let lastKeywordXMP: String?
+        let duration: String?
+        let imageWidth: String?
+        let imageHeight: String?
+        /// The filesystem modification date from ExifTool's File:FileModifyDate.
+        /// Used as a last-resort fallback for files (e.g. MPG) with no embedded date tags.
+        let fileModifyDate: String?
+        /// Where the dateTimeOriginal value came from. nil when dateTimeOriginal is nil.
+        let dateSource: DateSource?
+    }
+
+    /// Indicates which ExifTool tag provided the dateTimeOriginal value.
+    enum DateSource: String {
+        case dateTimeOriginal
+        case createDate
+        case fileModifyDate
+    }
+
+    // MARK: - JSON Decoding
+
+    /// Creates an empty FileMetadata value (all nil) for use as error/default sentinel.
+    static func emptyMetadata() -> FileMetadata {
+        FileMetadata(
+            dateTimeOriginal: nil, createDate: nil, modifyDate: nil,
+            description: nil, imageDescription: nil, captionAbstract: nil, subject: nil,
+            keywords: nil, lastKeywordXMP: nil,
+            duration: nil, imageWidth: nil, imageHeight: nil,
+            fileModifyDate: nil, dateSource: nil
+        )
+    }
+
+    /// Decoding struct for readDateTimeOriginal fallback — needs both
+    /// DateTimeOriginal and CreateDate to implement the video fallback.
+    struct DateTimeFallbackOutput: Decodable {
+        let sourceFile: String
+        let dateTimeOriginal: String?
+        let createDate: String?
+
+        enum CodingKeys: String, CodingKey {
+            case sourceFile = "SourceFile"
+            case dateTimeOriginal = "DateTimeOriginal"
+            case createDate = "CreateDate"
+        }
+    }
+
+    /// Internal JSON output shape from ExifTool's `-json` mode.
+    /// Only fields we care about are decoded; ExifTool may return many more.
+    ///
+    /// Fields added for video support:
+    ///   - Duration (format: "0:02:30" or seconds for images/videos)
+    ///   - ImageWidth, ImageHeight (pixel dimensions — reported by ExifTool for both images and videos)
+    struct FullExifToolOutput: Decodable {
+        let sourceFile: String
+        let dateTimeOriginal: String?
+        let createDate: String?
+        let modifyDate: String?
+        let fileModifyDate: String?
+        let description: String?
+        let imageDescription: String?
+        let captionAbstract: String?
+        let subject: [String]?
+        let keywords: [String]?
+        let lastKeywordXMP: [String]?
+        let duration: String?
+        let imageWidth: String?
+        let imageHeight: String?
+
+        enum CodingKeys: String, CodingKey {
+            case sourceFile = "SourceFile"
+            case dateTimeOriginal = "DateTimeOriginal"
+            case createDate = "CreateDate"
+            case modifyDate = "ModifyDate"
+            case fileModifyDate = "FileModifyDate"
+            case description = "Description"
+            case imageDescription = "ImageDescription"
+            case captionAbstract = "Caption-Abstract"
+            case subject = "Subject"
+            case keywords = "Keywords"
+            case lastKeywordXMP = "LastKeywordXMP"
+            case duration = "Duration"
+            case imageWidth = "ImageWidth"
+            case imageHeight = "ImageHeight"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            sourceFile = try container.decode(String.self, forKey: .sourceFile)
+            dateTimeOriginal = try container.decodeIfPresent(String.self, forKey: .dateTimeOriginal)
+            createDate = try container.decodeIfPresent(String.self, forKey: .createDate)
+            modifyDate = try container.decodeIfPresent(String.self, forKey: .modifyDate)
+            fileModifyDate = try container.decodeIfPresent(String.self, forKey: .fileModifyDate)
+            description = try container.decodeIfPresent(String.self, forKey: .description)
+            imageDescription = try container.decodeIfPresent(String.self, forKey: .imageDescription)
+            captionAbstract = try container.decodeIfPresent(String.self, forKey: .captionAbstract)
+            if let subjects = try? container.decode([String].self, forKey: .subject) {
+                subject = subjects
+            } else if let subjectString = try? container.decode(String.self, forKey: .subject) {
+                subject = [subjectString]
+            } else {
+                subject = nil
+            }
+            if let keywordsList = try? container.decode([String].self, forKey: .keywords) {
+                keywords = keywordsList
+            } else if let keywordString = try? container.decode(String.self, forKey: .keywords) {
+                keywords = [keywordString]
+            } else {
+                keywords = nil
+            }
+            if let xmpList = try? container.decode([String].self, forKey: .lastKeywordXMP) {
+                lastKeywordXMP = xmpList
+            } else if let xmpString = try? container.decode(String.self, forKey: .lastKeywordXMP) {
+                lastKeywordXMP = [xmpString]
+            } else {
+                lastKeywordXMP = nil
+            }
+            // Duration can be a String like "0:02:30" or a number (seconds),
+            // so decode generically
+            if let durationStr = try? container.decode(String.self, forKey: .duration) {
+                duration = durationStr
+            } else if let durationNum = try? container.decode(Double.self, forKey: .duration) {
+                // Convert seconds to HH:MM:SS format for display
+                let hours = Int(durationNum) / 3600
+                let minutes = (Int(durationNum) % 3600) / 60
+                let seconds = Int(durationNum) % 60
+                duration = String(format: "%d:%02d:%02d", hours, minutes, seconds)
+            } else {
+                duration = nil
+            }
+            if let w = try? container.decode(Int.self, forKey: .imageWidth) {
+                imageWidth = "\(w)"
+            } else if let w = try? container.decode(String.self, forKey: .imageWidth) {
+                imageWidth = w
+            } else {
+                imageWidth = nil
+            }
+            if let h = try? container.decode(Int.self, forKey: .imageHeight) {
+                imageHeight = "\(h)"
+            } else if let h = try? container.decode(String.self, forKey: .imageHeight) {
+                imageHeight = h
+            } else {
+                imageHeight = nil
+            }
+        }
+    }
+
+    // MARK: - Read
+
+    /// Reads `DateTimeOriginal` from a single file using `exiftool -json`.
+    /// For files (especially videos) that don't have DateTimeOriginal,
+    /// falls back to CreateDate which is available across both formats.
+    /// - Parameter url: The file URL to read from.
+    /// - Returns: The raw DateTimeOriginal string, or nil if missing/error.
+    static func readDateTimeOriginal(from url: URL) -> String? {
+        readDateTimeOriginal(from: [url])[url] ?? nil
+    }
+
+    /// Reads `DateTimeOriginal` from multiple files in a **single** ExifTool invocation.
+    ///
+    /// This is dramatically faster than calling `readDateTimeOriginal(from:)` in a loop
+    /// because ExifTool only starts up once and processes all files in one pass.
+    /// For large batches (100+ files), this can be 50–100× faster.
+    ///
+    /// Falls back to CreateDate for files (e.g. videos) that don't have DateTimeOriginal.
+    /// This ensures the DTO field is always populated for display and rename operations.
+    ///
+    /// - Parameter urls: The file URLs to read from.
+    /// - Returns: A dictionary mapping each URL to its DateTimeOriginal (or nil if missing/error).
+    static func readDateTimeOriginal(from urls: [URL]) -> [URL: String?] {
+        guard !urls.isEmpty else { return [:] }
+        guard missingToolError == nil else {
+            return Dictionary(uniqueKeysWithValues: urls.map { ($0, nil as String?) })
+        }
+
+        let result = runReadTool(with: ["-json", "-DateTimeOriginal", "-CreateDate"] + urls.map(\.path))
+        guard !result.stdoutData.isEmpty,
+              let json = try? decoder.decode([DateTimeFallbackOutput].self, from: result.stdoutData) else {
+            return Dictionary(uniqueKeysWithValues: urls.map { ($0, nil as String?) })
+        }
+
+        let pathLookup: [String: URL] = Dictionary(uniqueKeysWithValues: urls.map {
+            ($0.standardizedFileURL.path, $0)
+        })
+
+        var results: [URL: String?] = [:]
+        for entry in json {
+            let entryPath = (entry.sourceFile as NSString).standardizingPath
+            if let originalURL = pathLookup[entryPath] {
+                results[originalURL] = entry.dateTimeOriginal ?? entry.createDate
+            }
+        }
+        for url in urls {
+            if !results.keys.contains(url) { results[url] = nil }
+        }
+        return results
+    }
+
+    // MARK: - Full Metadata Read (Batch)
+
+    /// Reads all supported metadata fields from multiple files in a **single** ExifTool invocation.
+    ///
+    /// For files that don't have DateTimeOriginal (e.g. videos), dateTimeOriginal
+    /// falls back to CreateDate. This ensures the DTO field is always populated
+    /// for display and rename operations.
+    ///
+    /// - Parameter urls: The file URLs to read from.
+    /// - Returns: A dictionary mapping each URL to its FileMetadata.
+    static func readAllMetadata(from urls: [URL]) -> [URL: FileMetadata] {
+        guard !urls.isEmpty else { return [:] }
+        guard missingToolError == nil else {
+            return Dictionary(uniqueKeysWithValues: urls.map { ($0, emptyMetadata()) })
+        }
+
+        let args = [
+            "-json",
+            "-DateTimeOriginal",
+            "-CreateDate",
+            "-ModifyDate",
+            "-FileModifyDate",
+            "-Description",
+            "-ImageDescription",
+            "-Caption-Abstract",
+            "-Subject",
+            "-Keywords",
+            "-LastKeywordXMP",
+            "-Duration",
+            "-ImageWidth",
+            "-ImageHeight"
+        ] + urls.map(\.path)
+
+        let result = runReadTool(with: args)
+
+        guard !result.stdoutData.isEmpty,
+              let json = try? decoder.decode([FullExifToolOutput].self, from: result.stdoutData) else {
+            return Dictionary(uniqueKeysWithValues: urls.map { ($0, emptyMetadata()) })
+        }
+
+        let pathLookup: [String: URL] = Dictionary(uniqueKeysWithValues: urls.map {
+            ($0.standardizedFileURL.path, $0)
+        })
+
+        var results: [URL: FileMetadata] = [:]
+        for entry in json {
+            let entryPath = (entry.sourceFile as NSString).standardizingPath
+            guard let originalURL = pathLookup[entryPath] else { continue }
+            let dateSource: ExifToolService.DateSource?
+            let dto: String?
+            if let dtoValue = entry.dateTimeOriginal {
+                dto = dtoValue
+                dateSource = .dateTimeOriginal
+            } else if let cdValue = entry.createDate {
+                dto = cdValue
+                dateSource = .createDate
+            } else if let fmdValue = entry.fileModifyDate {
+                dto = fmdValue
+                dateSource = .fileModifyDate
+            } else {
+                dto = nil
+                dateSource = nil
+            }
+            results[originalURL] = FileMetadata(
+                dateTimeOriginal: dto,
+                createDate: entry.createDate,
+                modifyDate: entry.modifyDate,
+                description: entry.description,
+                imageDescription: entry.imageDescription,
+                captionAbstract: entry.captionAbstract,
+                subject: entry.subject?.joined(separator: ", "),
+                keywords: entry.keywords?.joined(separator: ", "),
+                lastKeywordXMP: entry.lastKeywordXMP?.joined(separator: ", "),
+                duration: entry.duration,
+                imageWidth: entry.imageWidth,
+                imageHeight: entry.imageHeight,
+                fileModifyDate: entry.fileModifyDate,
+                dateSource: dateSource
+            )
+        }
+        for url in urls {
+            if !results.keys.contains(url) {
+                results[url] = emptyMetadata()
+            }
+        }
+        return results
+    }
+
+    // MARK: - Write (Batch)
+
+    /// Writes the date/time value to all relevant date tags in one shot.
+    ///
+    /// This replaces the old "save DateTimeOriginal" + "sanitise" two-step approach.
+    /// Now a single Save operation writes to every date-related tag, ensuring
+    /// consistency across all EXIF/QuickTime date fields without needing a
+    /// separate sanitise step.
+    ///
+    /// **For images:**
+    ///   - Writes DateTimeOriginal
+    ///   - Copies to CreateDate, ModifyDate
+    ///   - Clears OffsetTime, OffsetTimeOriginal, OffsetTimeDigitized
+    ///
+    /// **For videos:**
+    ///   - Writes QuickTime:CreationDate
+    ///   - Copies to CreateDate, ModifyDate, and DateTimeOriginal
+    ///   - (No offset time tags — not applicable to QuickTime containers)
+    ///
+    /// Note: DateTimeOriginal is included so readAllMetadata (which reads
+    /// DateTimeOriginal as the primary DTO field) returns the updated value
+    /// when the file is re-imported. Without this, .mov/.mp4 files would
+    /// appear to save correctly in the UI but revert on re-import.
+    ///
+    /// - Parameters:
+    ///   - value: The date string to write (e.g. "2024:01:15 14:30:00").
+    ///   - urls: The file URLs to apply the change to.
+    /// - Returns: A WriteResult with success status and captured output/error.
+    static func writeDateTimeOriginal(_ value: String, to urls: [URL]) -> WriteResult {
+        guard !urls.isEmpty else {
+            return WriteResult(success: false, output: "No files provided.")
+        }
+        if let error = missingToolError {
+            return WriteResult(success: false, output: error)
+        }
+
+        let (imageURLs, quickTimeURLs, otherVideoURLs) = splitByMediaType(urls)
+
+        var allSucceeded = true
+        var outputs: [String] = []
+
+        if !imageURLs.isEmpty {
+            let args: [String] = [
+                "-overwrite_original",
+                "-m",
+                "-EXIF:DateTimeOriginal=\(value)",
+                "-CreateDate=\(value)",
+                "-ModifyDate=\(value)",
+                "-OffsetTime=",
+                "-OffsetTimeOriginal=",
+                "-OffsetTimeDigitized="
+            ] + imageURLs.map(\.path)
+            let result = runWriteTool(with: args)
+            if !result.success { allSucceeded = false }
+            if !result.output.isEmpty { outputs.append(result.output) }
+        }
+
+        if !quickTimeURLs.isEmpty {
+            let args: [String] = [
+                "-overwrite_original",
+                "-m",
+                "-QuickTime:CreationDate=\(value)",
+                "-CreateDate=\(value)",
+                "-ModifyDate=\(value)",
+                "-DateTimeOriginal=\(value)"
+            ] + quickTimeURLs.map(\.path)
+            let result = runWriteTool(with: args)
+            if !result.success { allSucceeded = false }
+            if !result.output.isEmpty { outputs.append(result.output) }
+        }
+
+        if !otherVideoURLs.isEmpty {
+            let args: [String] = [
+                "-overwrite_original",
+                "-m",
+                "-DateTimeOriginal=\(value)",
+                "-CreateDate=\(value)",
+                "-ModifyDate=\(value)"
+            ] + otherVideoURLs.map(\.path)
+            let result = runWriteTool(with: args)
+            if !result.success { allSucceeded = false }
+            if !result.output.isEmpty { outputs.append(result.output) }
+        }
+
+        let combined = outputs.joined(separator: "\n")
+        let anyEmpty = imageURLs.isEmpty && quickTimeURLs.isEmpty && otherVideoURLs.isEmpty
+        return WriteResult(success: allSucceeded || anyEmpty, output: combined)
+    }
+
+    /// Writes a description value to all description-related tags.
+    /// For images: Description, ImageDescription, Caption-Abstract.
+    /// For videos: Description only (ImageDescription / Caption-Abstract
+    /// are EXIF/IPTC tags and don't exist in QuickTime containers).
+    ///
+    /// - Parameters:
+    ///   - value: The description string to write.
+    ///   - urls: The file URLs to apply the change to.
+    /// - Returns: A WriteResult with success status and captured output/error.
+    static func writeDescription(_ value: String, to urls: [URL]) -> WriteResult {
+        guard !urls.isEmpty else {
+            return WriteResult(success: false, output: "No files provided.")
+        }
+        if let error = missingToolError {
+            return WriteResult(success: false, output: error)
+        }
+
+        let (imageURLs, quickTimeURLs, otherVideoURLs) = splitByMediaType(urls)
+        let allVideoURLs = quickTimeURLs + otherVideoURLs
+        var allSucceeded = true
+        var outputs: [String] = []
+
+        if !imageURLs.isEmpty {
+            let args = [
+                "-overwrite_original",
+                "-m",
+                "-Description=\(value)",
+                "-ImageDescription=\(value)",
+                "-Caption-Abstract=\(value)"
+            ] + imageURLs.map(\.path)
+            let result = runWriteTool(with: args)
+            if !result.success { allSucceeded = false }
+            if !result.output.isEmpty { outputs.append(result.output) }
+        }
+
+        if !allVideoURLs.isEmpty {
+            let args = [
+                "-overwrite_original",
+                "-m",
+                "-Description=\(value)"
+            ] + allVideoURLs.map(\.path)
+            let result = runWriteTool(with: args)
+            if !result.success { allSucceeded = false }
+            if !result.output.isEmpty { outputs.append(result.output) }
+        }
+
+        let combined = outputs.joined(separator: "\n")
+        let anyEmpty = imageURLs.isEmpty && allVideoURLs.isEmpty
+        return WriteResult(success: allSucceeded || anyEmpty, output: combined)
+    }
+
+    // MARK: - Sanitise
+
+    /// Sanitises files by normalising date formats to proper EXIF/QuickTime
+    /// format (`YYYY:MM:DD HH:MM:SS`), propagating dates across all date tags,
+    /// clearing offset time tags (images), and syncing descriptions.
+    ///
+    /// This is designed for files that have XMP-style ISO 8601 dates
+    /// (e.g. `2010-03-27T01:40:19+00:00`) which the app's date formatter
+    /// cannot parse, causing the Offset feature to skip them silently.
+    ///
+    /// **For images:**
+    ///   - Normalises DateTimeOriginal via `DateFmt`
+    ///   - Propagates to CreateDate, ModifyDate
+    ///   - Clears OffsetTime, OffsetTimeOriginal, OffsetTimeDigitized
+    ///   - Syncs Description → ImageDescription, Caption-Abstract
+    ///
+    /// **For videos:**
+    ///   - Normalises QuickTime:CreationDate via `DateFmt`
+    ///   - Propagates to CreateDate, ModifyDate
+    ///   - Syncs Description (no offset tags — not applicable)
+    ///
+    /// - Parameter urls: The file URLs to sanitise.
+    /// - Returns: A WriteResult with success status and captured output/error.
+    static func sanitise(_ urls: [URL]) -> WriteResult {
+        guard !urls.isEmpty else {
+            return WriteResult(success: false, output: "No files provided.")
+        }
+        if let error = missingToolError {
+            return WriteResult(success: false, output: error)
+        }
+
+        let (imageURLs, quickTimeURLs, otherVideoURLs) = splitByMediaType(urls)
+        let allVideoURLs = quickTimeURLs + otherVideoURLs
+        var allSucceeded = true
+        var outputs: [String] = []
+
+        if !imageURLs.isEmpty {
+            let args: [String] = [
+                "-overwrite_original",
+                "-m",
+                #"-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}"#,
+                "-CreateDate<DateTimeOriginal",
+                "-ModifyDate<DateTimeOriginal",
+                "-OffsetTime=",
+                "-OffsetTimeOriginal=",
+                "-OffsetTimeDigitized=",
+                "-ImageDescription<Description",
+                "-Caption-Abstract<Description"
+            ] + imageURLs.map(\.path)
+            let result = runWriteTool(with: args)
+            if !result.success { allSucceeded = false }
+            if !result.output.isEmpty { outputs.append(result.output) }
+        }
+
+        if !allVideoURLs.isEmpty {
+            if !quickTimeURLs.isEmpty {
+                let args: [String] = [
+                    "-overwrite_original",
+                    "-m",
+                    #"-QuickTime:CreationDate<${QuickTime:CreationDate;DateFmt("%Y:%m:%d %H:%M:%S")}"#,
+                    "-CreateDate<QuickTime:CreationDate",
+                    "-ModifyDate<QuickTime:CreationDate",
+                    "-Description<Description"
+                ] + quickTimeURLs.map(\.path)
+                let result = runWriteTool(with: args)
+                if !result.success { allSucceeded = false }
+                if !result.output.isEmpty { outputs.append(result.output) }
+            }
+            if !otherVideoURLs.isEmpty {
+                let args: [String] = [
+                    "-overwrite_original",
+                    "-m",
+                    #"-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}"#,
+                    "-CreateDate<DateTimeOriginal",
+                    "-ModifyDate<DateTimeOriginal",
+                    "-Description<Description"
+                ] + otherVideoURLs.map(\.path)
+                let result = runWriteTool(with: args)
+                if !result.success { allSucceeded = false }
+                if !result.output.isEmpty { outputs.append(result.output) }
+            }
+        }
+
+        let combined = outputs.joined(separator: "\n")
+        let anyEmpty = imageURLs.isEmpty && allVideoURLs.isEmpty
+        return WriteResult(success: allSucceeded || anyEmpty, output: combined)
+    }
+}

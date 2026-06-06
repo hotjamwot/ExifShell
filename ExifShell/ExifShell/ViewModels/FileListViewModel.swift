@@ -260,11 +260,18 @@ class FileListViewModel {
 
     private let metadataBatchSize = 80
 
+    /// Splits an array into chunks of `metadataBatchSize`.
+    /// Eliminates the duplicated `stride` pattern across loadMetadata,
+    /// sanitiseSelectedAsync, and renameAllAsync.
+    private func chunked<T>(_ array: [T]) -> [[T]] {
+        stride(from: 0, to: array.count, by: metadataBatchSize).map { start in
+            Array(array[start..<min(start + metadataBatchSize, array.count)])
+        }
+    }
+
     private func loadMetadata(for urls: [URL]) async -> [URL: ExifToolService.FileMetadata] {
         var merged: [URL: ExifToolService.FileMetadata] = [:]
-        let chunks = stride(from: 0, to: urls.count, by: metadataBatchSize).map { start in
-            Array(urls[start..<min(start + metadataBatchSize, urls.count)])
-        }
+        let chunks = chunked(urls)
 
         for (index, chunk) in chunks.enumerated() {
             let batchMetadata = await runBackground { ExifToolService.readAllMetadata(from: chunk) }
@@ -656,7 +663,7 @@ class FileListViewModel {
                 successCount += group.count
             } else {
                 failCount += group.count
-                lastError = result.output
+                lastError = ExifToolService.parseErrorSummary(result.output)
             }
         }
 
@@ -704,7 +711,7 @@ class FileListViewModel {
                 successCount += group.count
             } else {
                 failCount += group.count
-                lastError = result.output
+                lastError = ExifToolService.parseErrorSummary(result.output)
             }
         }
 
@@ -791,9 +798,7 @@ class FileListViewModel {
         beginOperation(message: messageBase, determinate: true)
 
         let writableURLs = writableTargets.map(\.url)
-        let chunks = stride(from: 0, to: writableURLs.count, by: metadataBatchSize).map { start in
-            Array(writableURLs[start..<min(start + metadataBatchSize, writableURLs.count)])
-        }
+        let chunks = chunked(writableURLs)
         let totalChunks = chunks.count
 
         var allSucceeded = true
@@ -806,7 +811,7 @@ class FileListViewModel {
 
             if !result.success {
                 allSucceeded = false
-                lastError = result.output
+                lastError = ExifToolService.parseErrorSummary(result.output)
                 break
             }
         }
@@ -876,9 +881,7 @@ class FileListViewModel {
                 description: file.description
             )
         }
-        let chunks = stride(from: 0, to: allInputs.count, by: metadataBatchSize).map { start in
-            Array(allInputs[start..<min(start + metadataBatchSize, allInputs.count)])
-        }
+        let chunks = chunked(allInputs)
         let totalChunks = chunks.count
 
         var totalRenamed = 0
@@ -922,7 +925,7 @@ class FileListViewModel {
                 }
             } else {
                 allSucceeded = false
-                lastError = result.output
+                lastError = ExifToolService.parseErrorSummary(result.output)
                 break
             }
         }

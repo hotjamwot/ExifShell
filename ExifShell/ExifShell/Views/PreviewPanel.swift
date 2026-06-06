@@ -132,7 +132,8 @@ struct PreviewPanel: View {
                                 original: file.originalDateTimeOriginal,
                                 current: file.dateTimeOriginal,
                                 isDirty: file.isDirty && file.dateTimeOriginal != file.originalDateTimeOriginal,
-                                dateSource: file.dateSource
+                                dateSource: file.dateSource,
+                                needsSanitise: file.needsSanitise
                             )
 
                             fieldDiffRow(
@@ -354,8 +355,9 @@ struct PreviewPanel: View {
 
     /// A clean diff row: label above, then original (strikethrough) → current (green) when dirty.
     /// When `dateSource` is provided, shows a small badge indicating where the date came from.
+    /// `needsSanitise` shows a warning badge if the date format is non-standard (e.g. XMP ISO 8601).
     @ViewBuilder
-    private func fieldDiffRow(label: String, original: String, current: String, isDirty: Bool, dateSource: ExifToolService.DateSource? = nil) -> some View {
+    private func fieldDiffRow(label: String, original: String, current: String, isDirty: Bool, dateSource: ExifToolService.DateSource? = nil, needsSanitise: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 Text(label)
@@ -371,6 +373,20 @@ struct PreviewPanel: View {
                             RoundedRectangle(cornerRadius: 3)
                                 .fill(Color.orange.opacity(0.12))
                         )
+                }
+                // Show a sanitise warning badge if the date format is non-standard
+                // (e.g. XMP ISO 8601 dates like "2010-03-27T01:40:19+00:00")
+                if needsSanitise {
+                    Text("⚠️ Sanitise")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(.orange)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(Color.orange.opacity(0.12))
+                        )
+                        .help("Date format needs sanitising — run Sanitise Selected")
                 }
             }
 

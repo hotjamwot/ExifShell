@@ -177,11 +177,15 @@ extension FileTableNSView {
                 return cell
 
             case "dateTimeOriginal":
+                // Prepend warning emoji when the date format needs sanitising
+                let displayText = file.needsSanitise ? "⚠️ \(file.dateTimeOriginal)" : file.dateTimeOriginal
                 let cell = dequeueEditableCell(tableView: tableView, id: cellID,
-                                                text: file.dateTimeOriginal,
-                                                dirty: file.isDirty,
+                                                text: displayText,
+                                                dirty: file.isDirty || file.needsSanitise,
                                                 columnID: columnID, row: row)
-                cell.textField?.toolTip = "DateTimeOriginal (EXIF tag)"
+                cell.textField?.toolTip = file.needsSanitise
+                    ? "Date format needs sanitising — run Sanitise Selected"
+                    : "DateTimeOriginal (EXIF tag)"
                 return cell
 
             case "description":

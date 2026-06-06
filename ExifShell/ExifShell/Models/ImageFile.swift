@@ -192,6 +192,29 @@ final class ImageFile: Identifiable, Hashable {
         }
     }
 
+    // MARK: - Sanitise Detection
+
+    /// The expected format for DateTimeOriginal values: `yyyy:MM:dd HH:mm:ss`.
+    /// XMP-style ISO 8601 dates (e.g. `2010-03-27T01:40:19+00:00`) need to be
+    /// sanitised before ExifShell can use them properly.
+    private static let exifDatePattern = #"^\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2}$"#
+
+    /// Returns true if the file's `dateTimeOriginal` contains a non-EXIF date
+    /// format that would benefit from sanitisation. This typically catches
+    /// XMP/ISO 8601 dates like `2010-03-27T01:40:19+00:00` that the app's
+    /// date formatter cannot parse.
+    var needsSanitise: Bool {
+        guard !dateTimeOriginal.isEmpty else { return false }
+        // Check if it already matches the expected EXIF format
+        if let regex = try? NSRegularExpression(pattern: Self.exifDatePattern) {
+            let range = NSRange(dateTimeOriginal.startIndex..<dateTimeOriginal.endIndex, in: dateTimeOriginal)
+            if regex.firstMatch(in: dateTimeOriginal, range: range) != nil {
+                return false
+            }
+        }
+        return true
+    }
+
     // MARK: - Hashable
 
     func hash(into hasher: inout Hasher) {
