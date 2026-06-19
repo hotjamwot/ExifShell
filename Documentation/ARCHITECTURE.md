@@ -134,7 +134,8 @@ Sources/
 - `var files: [ImageFile]` — the source of truth for the file list.
 - `var selectedFile: ImageFile?` — `didSet` triggers `clearFeedback()`, which clears save confirmation and status when navigating to a different file.
 - `var selectedFiles: [ImageFile]` — holds multi-selection for bulk edit.
-- `var bulkEditValue: String` — the text field value from the bulk edit bars (shared for date & description).
+- `var bulkEditValue: String` — the text field value from the DateTimeOriginal bulk edit bar.
+- `var bulkEditDescriptionValue: String` — the text field value from the Description bulk edit bar (separate from the date value).
 - `lastSaveFeedback: SaveFeedback?` — holds the most recent DateTimeOriginal save result.
 - `lastDescriptionSaveFeedback: SaveFeedback?` — holds the most recent Description save result.
 - `importFiles(_:)` / `importFolder(_:)` — validates image types via extension check, deduplicates by URL, batch-reads full metadata via `ExifToolService.readAllMetadata(from:)` in chunks of 80 files with live determinate progress, populates all fields including createDate, modifyDate, description, imageDescription, captionAbstract.
@@ -147,7 +148,7 @@ Sources/
   3. Groups dirty description files by value → `writeDescription()` per group.
   4. Only marks a file clean if ALL its field writes succeeded.
   5. Updates independent feedback for date and description saves.
-- `sanitiseSelected()` — operates on the **currently selected files** (`selectedFiles`). Saves dirty files first, then processes files in **batches of 80** with live determinate progress (`"Sanitising (X/Y)..."`), skips unwritable formats (AVI, MPEG) with a warning, then re-reads all metadata from disk to refresh the display.
+- `sanitiseSelected()` — operates on the **currently selected files** (`selectedFiles`). Saves dirty files first, then runs a **Phase 1 pre-write** for files whose `dateSource == .fileModifyDate` (these have no embedded date tag on disk, so the main sanitise pipeline would silently do nothing). The pre-write writes each file's own in-memory date value (timezone stripped) to a proper `DateTimeOriginal`/`QuickTime:CreationDate` tag, then the main pipeline processes files in **batches of 80** with live determinate progress (`"Sanitising (X/Y)..."`), skips unwritable formats (AVI, MPEG) with a warning, then re-reads all metadata from disk to refresh the display.
 - `renameAll()` — saves dirty files first, then processes files in **batches of 80** with live determinate progress (`"Renaming (X/Y)..."`), calls `ExifToolService.renameFiles()` with the in-memory metadata content, updates the in-memory URL for each renamed file from the returned path mapping.
 
 ### DropZoneView

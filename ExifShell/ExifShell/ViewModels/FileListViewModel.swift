@@ -143,8 +143,11 @@ class FileListViewModel {
     /// Displayed alongside status messages containing ❌ so users can copy the details.
     var lastErrorDetail: String?
 
-    /// The bulk-edit value being typed (shown in the toolbar when multiple files are selected).
+    /// The bulk-edit date value being typed (shown in the DateTimeOriginal toolbar when multiple files are selected).
     var bulkEditValue: String = ""
+
+    /// The bulk-edit description value being typed (shown in the Description toolbar when multiple files are selected).
+    var bulkEditDescriptionValue: String = ""
 
     enum DateBulkEditMode: String, CaseIterable, Identifiable {
         case set = "Set"
@@ -340,6 +343,7 @@ class FileListViewModel {
         lastErrorDetail = nil
         statusMessage = nil
         bulkEditValue = ""
+        bulkEditDescriptionValue = ""
         // files.didSet handles invalidation
     }
 
@@ -462,9 +466,9 @@ class FileListViewModel {
         }
     }
 
-    /// Applies the current `bulkEditValue` to descriptions of all currently selected files.
+    /// Applies the current `bulkEditDescriptionValue` to descriptions of all currently selected files.
     func applyBulkEditDescription() {
-        let value = bulkEditValue.trimmingCharacters(in: .whitespaces)
+        let value = bulkEditDescriptionValue.trimmingCharacters(in: .whitespaces)
         guard !value.isEmpty else {
             statusMessage = "Enter a description value before applying."
             return
@@ -803,12 +807,44 @@ class FileListViewModel {
             return
         }
 
+        // Phase 1: Pre-write date tags for files whose date came from FileModifyDate.
+        // These files have no embedded DateTimeOriginal/CreateDate tag on disk,
+        // so the sanitise pipeline (which reads from these tags via DateFmt) would
+        // silently do nothing. We first write the in-memory date value (stripped
+        // of timezone offset) to the appropriate tag so sanitise can then normalise it.
+        // Each file must use its OWN dateTimeOriginal — grouping by the stripped
+        // value so files with matching dates can still be batched efficiently.
+        let fileSystemDateFiles = writableTargets.filter { $0.dateSource == .fileModifyDate && !$0.dateTimeOriginal.isEmpty }
+        var preWriteError: String?
+
+        if !fileSystemDateFiles.isEmpty {
+            updateOperation(
+                progress: 0,
+                message: "Preparing files with filesystem dates (\(fileSystemDateFiles.count) file(s))..."
+            )
+            // Group files by their stripped dateTimeOriginal so files with
+            // matching dates are written together in a single ExifTool call.
+            let groupedByDate = Dictionary(grouping: fileSystemDateFiles) {
+                ExifToolService.stripTimezone(from: $0.dateTimeOriginal)
+            }
+            for (cleanedValue, group) in groupedByDate {
+                let fmURLs = group.map(\.url)
+                let preWriteResult = await runBackground { ExifToolService.writeDateTimeOriginal(cleanedValue, to: fmURLs) }
+                if !preWriteResult.success {
+                    preWriteError = ExifToolService.parseErrorSummary(preWriteResult.output)
+                    break
+                }
+            }
+        }
+
         isSanitising = true
         let messageBase = skippedCount > 0
             ? "Sanitising \(writableTargets.count) file(s) (skipping \(skippedCount) unwritable)..."
             : "Sanitising \(writableTargets.count) file(s)..."
         beginOperation(message: messageBase, determinate: true)
 
+        // If the pre-write failed, we still continue with the main sanitise
+        // on the remaining files (it'll just be a no-op on the fileModifyDate ones).
         let writableURLs = writableTargets.map(\.url)
         let chunks = chunked(writableURLs)
         let totalChunks = chunks.count

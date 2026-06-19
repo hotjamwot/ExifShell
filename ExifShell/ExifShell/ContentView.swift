@@ -253,7 +253,7 @@ struct ContentView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
 
-            TextField("Description text...", text: $viewModel.bulkEditValue)
+            TextField("Description text...", text: $viewModel.bulkEditDescriptionValue)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.caption, design: .monospaced))
                 .frame(minWidth: 250)

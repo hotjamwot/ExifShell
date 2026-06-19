@@ -71,6 +71,25 @@ extension ExifToolService {
 
     // MARK: - Error Parser
 
+    /// Strips trailing timezone offset from a date string returned by ExifTool's
+    /// FileModifyDate tag (e.g. `2026:06:19 10:59:26+01:00` → `2026:06:19 10:59:26`).
+    ///
+    /// FileModifyDate is a filesystem timestamp that includes the local timezone offset,
+    /// unlike EXIF DateTimeOriginal / CreateDate which are timezone-naive.
+    /// This helper removes the trailing `+HH:MM`, `-HH:MM`, or `Z` suffix.
+    ///
+    /// - Parameter dateString: The raw date string from ExifTool.
+    /// - Returns: The date string with any timezone offset stripped, or the original
+    ///   string if no offset pattern is found.
+    static func stripTimezone(from dateString: String) -> String {
+        // Matches trailing timezone offsets: +01:00, -05:30, Z (UTC)
+        guard let regex = try? NSRegularExpression(pattern: "[+-]\\d{2}:\\d{2}$|Z$") else {
+            return dateString
+        }
+        let range = NSRange(dateString.startIndex..<dateString.endIndex, in: dateString)
+        return regex.stringByReplacingMatches(in: dateString, range: range, withTemplate: "")
+    }
+
     /// Attempts to extract a concise, user-friendly error summary from ExifTool's
     /// verbose output. ExifTool can produce hundreds of lines for batch operations,
     /// most of which are warnings or per-file progress that the user doesn't need.
