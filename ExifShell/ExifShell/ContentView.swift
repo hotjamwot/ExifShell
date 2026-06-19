@@ -185,10 +185,6 @@ struct ContentView: View {
                     .foregroundColor(.secondary)
                     .font(.caption)
 
-                Text("Set DateTimeOriginal for \(viewModel.selectedFiles.count) selected file(s):")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
                 TextField("e.g. 2024:01:15 14:30:00", text: $viewModel.bulkEditValue)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.caption, design: .monospaced))
@@ -198,10 +194,6 @@ struct ContentView: View {
                 Image(systemName: "clock.arrow.2.circlepath")
                     .foregroundColor(.secondary)
                     .font(.caption)
-
-                Text("Offset DateTimeOriginal for \(viewModel.selectedFiles.count) selected file(s):")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
 
                 Button(action: { viewModel.bulkOffsetPositive.toggle() }) {
                     Text(viewModel.bulkOffsetPositive ? "+" : "−")

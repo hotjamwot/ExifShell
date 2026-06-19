@@ -63,6 +63,32 @@ final class ImageFile: Identifiable, Hashable {
         }
     }
 
+    /// Whether this video uses QuickTime metadata tags for dates.
+    var usesQuickTimeCreationDate: Bool {
+        let ext = url.pathExtension.lowercased()
+        return ["mp4", "mov", "m4v"].contains(ext)
+    }
+
+    /// The display label for the editable date field based on media type.
+    /// For images this is `DateTimeOriginal`; for QuickTime videos it is
+    /// `QuickTime:CreationDate`.
+    var editableDateTagLabel: String {
+        mediaType == .video && usesQuickTimeCreationDate ? "QuickTime:CreationDate" : "DateTimeOriginal"
+    }
+
+    /// The display label for the source badge shown in the preview.
+    var dateSourceLabel: String? {
+        guard let source = dateSource else { return nil }
+        switch source {
+        case .dateTimeOriginal:
+            return mediaType == .video && usesQuickTimeCreationDate ? "QuickTime:CreationDate" : "DateTimeOriginal"
+        case .createDate:
+            return "CreateDate"
+        case .fileModifyDate:
+            return "File System"
+        }
+    }
+
     // MARK: - Description (editable, master field)
 
     /// The last-saved description value.

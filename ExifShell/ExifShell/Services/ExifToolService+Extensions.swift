@@ -90,6 +90,41 @@ extension ExifToolService {
         return regex.stringByReplacingMatches(in: dateString, range: range, withTemplate: "")
     }
 
+    /// Normalises a variety of date string shapes into the EXIF date format
+    /// `YYYY:MM:DD HH:MM:SS` where possible. This is used by the Phase 1
+    /// pre-write so values like `2011-03-16T11:55:13+00:00` or
+    /// `2011-03-16 11:55:13+00:00` become `2011:03:16 11:55:13`.
+    ///
+    /// Behaviour:
+    ///  - Strips any trailing timezone (`+00:00`, `Z`, etc.)
+    ///  - Replaces a literal `T` between date/time with a space
+    ///  - Converts `YYYY-MM-DD` → `YYYY:MM:DD`
+    ///  - If the input already matches EXIF format, returns it unchanged
+    static func normalizeToExifDate(_ dateString: String) -> String {
+        let stripped = stripTimezone(from: dateString)
+
+        // If already EXIF format, return as-is
+        if let regex = try? NSRegularExpression(pattern: "^\\d{4}:\\d{2}:\\d{2} \\d{2}:\\d{2}:\\d{2}$") {
+            let range = NSRange(stripped.startIndex..<stripped.endIndex, in: stripped)
+            if regex.firstMatch(in: stripped, range: range) != nil {
+                return stripped
+            }
+        }
+
+        // Normalize ISO-like strings: YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS
+        var s = stripped.replacingOccurrences(of: "T", with: " ")
+        // Split into date and time (if present)
+        let parts = s.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+        guard parts.count > 0 else { return stripped }
+        let datePart = parts[0].replacingOccurrences(of: "-", with: ":")
+        let timePart = parts.count > 1 ? String(parts[1]) : ""
+
+        if !timePart.isEmpty {
+            return "\(datePart) \(timePart)"
+        }
+        return datePart
+    }
+
     /// Attempts to extract a concise, user-friendly error summary from ExifTool's
     /// verbose output. ExifTool can produce hundreds of lines for batch operations,
     /// most of which are warnings or per-file progress that the user doesn't need.

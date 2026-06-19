@@ -184,7 +184,7 @@ extension ExifToolService {
     ///     so e.g. 2 passes gives calls at ~0.25 and ~0.75.
     private static func renameWritableFiles(_ inputs: [RenameInput],
                                              progressHandler: ((Double, String) -> Void)? = nil) -> RenameResult {
-        let descriptionExpr = #"${Description;if($_){s/'\''//g;s/[^\p{L}\p{N}]+/_/g;s/^_+|_+$//g;$_="_ ".$_}}"#
+        let descriptionExpr = #"${Description;if($_){s/'\''//g;s/[^\p{L}\p{N}]+/_/g;s/^_+|_+$//g;$_="_".$_}}"#
         let dateFmt = ["-d", "%Y_%m_%d_%H%M"]
 
         // Step 1: Detect which tag category each file falls into, so we only
@@ -424,7 +424,7 @@ extension ExifToolService {
     /// Sanitises a description string for use in filenames.
     /// Matches ExifTool's behaviour: removes single quotes, replaces
     /// non-alphanumeric sequences with underscores, trims underscores,
-    /// and prepends "_ " if non-empty.
+    /// and prepends "_" if non-empty.
     private static func sanitizeDescriptionForRename(_ desc: String) -> String {
         guard !desc.isEmpty else { return "" }
         var result = desc
@@ -435,6 +435,6 @@ extension ExifToolService {
         // Remove leading/trailing underscores
         result = result.trimmingCharacters(in: CharacterSet(charactersIn: "_"))
         guard !result.isEmpty else { return "" }
-        return "_ \(result)"
+        return "_\(result)"
     }
 }

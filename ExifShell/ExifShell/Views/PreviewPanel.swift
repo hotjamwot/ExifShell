@@ -128,11 +128,11 @@ struct PreviewPanel: View {
                                 .textCase(.uppercase)
 
                             fieldDiffRow(
-                                label: "Date/Time Original",
+                                label: file.editableDateTagLabel,
                                 original: file.originalDateTimeOriginal,
                                 current: file.dateTimeOriginal,
                                 isDirty: file.isDirty && file.dateTimeOriginal != file.originalDateTimeOriginal,
-                                dateSource: file.dateSource,
+                                sourceLabel: file.dateSourceLabel,
                                 needsSanitise: file.needsSanitise
                             )
 
@@ -174,6 +174,15 @@ struct PreviewPanel: View {
                                 )
                             }
 
+                            if let v = file.fileModifyDate, !v.isEmpty {
+                                metadataRow(
+                                    label: "File Modification Date/Time",
+                                    value: v,
+                                    action: viewModel.selectedFiles.contains { $0.fileModifyDate?.isEmpty == false } ? {
+                                        viewModel.copyFileModifyDateToDateTimeOriginalSelection()
+                                    } : nil
+                                )
+                            }
 
                             if let v = file.imageDescription, !v.isEmpty {
                                 metadataRow(label: "Image Description", value: v)
@@ -265,6 +274,57 @@ struct PreviewPanel: View {
                             .controlSize(.regular)
                         }
 
+                        // Sanitise row: Sanitise Selected | Sanitise All
+                        HStack(spacing: 8) {
+                            Button {
+                                viewModel.sanitiseSelected()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if viewModel.isSanitising {
+                                        ProgressView()
+                                            .scaleEffect(0.7)
+                                            .controlSize(.small)
+                                    }
+                                    Image(systemName: viewModel.isSanitising
+                                        ? "wand.and.stars"
+                                        : "wand.and.rays")
+                                        .symbolEffect(.bounce, value: viewModel.isSanitising)
+                                        .symbolEffect(.pulse, isActive: viewModel.isSanitising)
+                                    Text(viewModel.isSanitising
+                                         ? "Sanitising..."
+                                         : "Sanitise Selected")
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
+                            .disabled(viewModel.isSanitising || viewModel.selectedFiles.isEmpty)
+                            .buttonStyle(.bordered)
+                            .controlSize(.regular)
+
+                            Button {
+                                viewModel.sanitiseAll()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if viewModel.isSanitising {
+                                        ProgressView()
+                                            .scaleEffect(0.7)
+                                            .controlSize(.small)
+                                    }
+                                    Image(systemName: viewModel.isSanitising
+                                        ? "wand.and.stars"
+                                        : "wand.and.rays")
+                                        .symbolEffect(.bounce, value: viewModel.isSanitising)
+                                        .symbolEffect(.pulse, isActive: viewModel.isSanitising)
+                                    Text(viewModel.isSanitising
+                                         ? "Sanitising..."
+                                         : "Sanitise All")
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
+                            .disabled(viewModel.isSanitising || viewModel.files.isEmpty)
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.regular)
+                        }
+
                         // Rename row: Rename Selected | Rename All
                         HStack(spacing: 8) {
                             Button {
@@ -309,31 +369,6 @@ struct PreviewPanel: View {
                             .buttonStyle(.borderedProminent)
                             .controlSize(.regular)
                         }
-
-                        // Sanitise row (full width)
-                        Button {
-                            viewModel.sanitiseSelected()
-                        } label: {
-                            HStack(spacing: 6) {
-                                if viewModel.isSanitising {
-                                    ProgressView()
-                                        .scaleEffect(0.7)
-                                        .controlSize(.small)
-                                }
-                                Image(systemName: viewModel.isSanitising
-                                    ? "wand.and.stars"
-                                    : "wand.and.rays")
-                                    .symbolEffect(.bounce, value: viewModel.isSanitising)
-                                    .symbolEffect(.pulse, isActive: viewModel.isSanitising)
-                                Text(viewModel.isSanitising
-                                     ? "Sanitising..."
-                                     : "Sanitise Selected")
-                            }
-                            .frame(maxWidth: .infinity)
-                        }
-                        .disabled(viewModel.isSanitising || viewModel.selectedFiles.isEmpty)
-                        .buttonStyle(.bordered)
-                        .controlSize(.regular)
 
                         // Status
                         if let status = viewModel.statusMessage {
@@ -399,14 +434,14 @@ struct PreviewPanel: View {
     /// When `dateSource` is provided, shows a small badge indicating where the date came from.
     /// `needsSanitise` shows a warning badge if the date format is non-standard (e.g. XMP ISO 8601).
     @ViewBuilder
-    private func fieldDiffRow(label: String, original: String, current: String, isDirty: Bool, dateSource: ExifToolService.DateSource? = nil, needsSanitise: Bool = false) -> some View {
+    private func fieldDiffRow(label: String, original: String, current: String, isDirty: Bool, sourceLabel: String? = nil, needsSanitise: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 Text(label)
                     .font(.caption)
                     .foregroundColor(.secondary)
-                if !current.isEmpty, let source = dateSource {
-                    Text(sourceBadgeText(source))
+                if !current.isEmpty, let source = sourceLabel {
+                    Text(source)
                         .font(.system(size: 9, weight: .medium))
                         .foregroundColor(.orange)
                         .padding(.horizontal, 4)

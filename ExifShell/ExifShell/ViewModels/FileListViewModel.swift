@@ -149,6 +149,19 @@ class FileListViewModel {
     /// The bulk-edit description value being typed (shown in the Description toolbar when multiple files are selected).
     var bulkEditDescriptionValue: String = ""
 
+    /// Label text used for bulk edit actions, based on the selected files.
+    var bulkEditDateLabel: String {
+        if selectedFiles.isEmpty {
+            return "DateTimeOriginal"
+        }
+        let quickTimeSelected = selectedFiles.contains { $0.mediaType == .video && $0.usesQuickTimeCreationDate }
+        let imageSelected = selectedFiles.contains { $0.mediaType == .image }
+        if quickTimeSelected && imageSelected {
+            return "DateTimeOriginal / QuickTime:CreationDate"
+        }
+        return quickTimeSelected ? "QuickTime:CreationDate" : "DateTimeOriginal"
+    }
+
     enum DateBulkEditMode: String, CaseIterable, Identifiable {
         case set = "Set"
         case offset = "Offset"
@@ -261,11 +274,14 @@ class FileListViewModel {
         importFiles(urls)
     }
 
-    private let metadataBatchSize = 80
+    private let metadataBatchSize = 200
 
     /// Splits an array into chunks of `metadataBatchSize`.
     /// Eliminates the duplicated `stride` pattern across loadMetadata,
     /// sanitiseSelectedAsync, and renameAllAsync.
+    ///
+    /// Increasing the batch size helps keep ExifTool invocations efficient
+    /// for dozens of files at once.
     private func chunked<T>(_ array: [T]) -> [[T]] {
         stride(from: 0, to: array.count, by: metadataBatchSize).map { start in
             Array(array[start..<min(start + metadataBatchSize, array.count)])
@@ -500,6 +516,14 @@ class FileListViewModel {
         copyDateFieldToDateTimeOriginal(
             sourceKeyPath: \ImageFile.modifyDate,
             label: "Modify Date"
+        )
+    }
+
+    /// Copies FileModifyDate into DateTimeOriginal for each selected file.
+    func copyFileModifyDateToDateTimeOriginalSelection() {
+        copyDateFieldToDateTimeOriginal(
+            sourceKeyPath: \ImageFile.fileModifyDate,
+            label: "File Modification Date/Time"
         )
     }
 
@@ -781,10 +805,23 @@ class FileListViewModel {
         Task { await sanitiseSelectedAsync() }
     }
 
+    /// Sanitises all loaded files by normalising date formats, propagating dates,
+    /// clearing offset tags (images), and syncing descriptions.
+    func sanitiseAll() {
+        Task { await sanitiseAllAsync() }
+    }
+
     private func sanitiseSelectedAsync() async {
-        let targets = selectedFiles
+        await sanitiseFiles(selectedFiles, emptyMessage: "No files selected to sanitise.")
+    }
+
+    private func sanitiseAllAsync() async {
+        await sanitiseFiles(files, emptyMessage: "No files loaded to sanitise.")
+    }
+
+    private func sanitiseFiles(_ targets: [ImageFile], emptyMessage: String) async {
         guard !targets.isEmpty else {
-            statusMessage = "No files selected to sanitise."
+            statusMessage = emptyMessage
             return
         }
 
@@ -807,32 +844,68 @@ class FileListViewModel {
             return
         }
 
-        // Phase 1: Pre-write date tags for files whose date came from FileModifyDate.
-        // These files have no embedded DateTimeOriginal/CreateDate tag on disk,
-        // so the sanitise pipeline (which reads from these tags via DateFmt) would
-        // silently do nothing. We first write the in-memory date value (stripped
-        // of timezone offset) to the appropriate tag so sanitise can then normalise it.
-        // Each file must use its OWN dateTimeOriginal — grouping by the stripped
-        // value so files with matching dates can still be batched efficiently.
-        let fileSystemDateFiles = writableTargets.filter { $0.dateSource == .fileModifyDate && !$0.dateTimeOriginal.isEmpty }
+        // Phase 1: Pre-write date tags for files whose date came from FileModifyDate,
+        // OR files whose dateTimeOriginal contains a timezone offset (like
+        // "2011:03:16 11:55:13+00:00"). These files have no embedded tag on disk
+        // (fileModifyDate case), or have a date format that DateFmt cannot parse
+        // (timezone-suffixed EXIF dates). In both cases we first write the
+        // in-memory date value (stripped of timezone offset) to the appropriate
+        // tag via a direct SET, then let the main sanitise pipeline normalise
+        // via DateFmt (which only handles clean EXIF or ISO 8601 formats).
+        //
+        // Each file uses its OWN dateTimeOriginal — grouping by the stripped
+        // value so files with matching dates are batched efficiently.
+        //
+        // IMPORTANT: For QuickTime videos, we write ONLY QuickTime:CreationDate
+        // (not DateTimeOriginal) because -DateTimeOriginal= would create an XMP
+        // tag in QuickTime containers, which ExifTool reads back in ISO 8601
+        // format (e.g. "2011-03-16T11:55:13+00:00"), defeating the sanitise.
+        let needsPreWrite = writableTargets.filter { file in
+            guard !file.dateTimeOriginal.isEmpty else { return false }
+            // Files with fileModifyDate source have no embedded tag — pre-write needed
+            if file.dateSource == .fileModifyDate { return true }
+            // Files with non-EXIF date formats (ISO/T with dashes or timezone)
+            // need a pre-write. Normalise to EXIF format and compare.
+            let normalized = ExifToolService.normalizeToExifDate(file.dateTimeOriginal)
+            return normalized != file.dateTimeOriginal
+        }
+
         var preWriteError: String?
 
-        if !fileSystemDateFiles.isEmpty {
+        if !needsPreWrite.isEmpty {
             updateOperation(
                 progress: 0,
-                message: "Preparing files with filesystem dates (\(fileSystemDateFiles.count) file(s))..."
+                message: "Preparing files with timezone-offset dates (\(needsPreWrite.count) file(s))..."
             )
-            // Group files by their stripped dateTimeOriginal so files with
+            // Group files by their normalised EXIF date so files with
             // matching dates are written together in a single ExifTool call.
-            let groupedByDate = Dictionary(grouping: fileSystemDateFiles) {
-                ExifToolService.stripTimezone(from: $0.dateTimeOriginal)
+            let groupedByDate = Dictionary(grouping: needsPreWrite) {
+                ExifToolService.normalizeToExifDate($0.dateTimeOriginal)
             }
+            // Split groups by media type so QuickTime videos only get
+            // QuickTime:CreationDate (not DateTimeOriginal which creates XMP tags)
             for (cleanedValue, group) in groupedByDate {
-                let fmURLs = group.map(\.url)
-                let preWriteResult = await runBackground { ExifToolService.writeDateTimeOriginal(cleanedValue, to: fmURLs) }
-                if !preWriteResult.success {
-                    preWriteError = ExifToolService.parseErrorSummary(preWriteResult.output)
-                    break
+                let (_, qtURLs, otherVideoURLs) = ExifToolService.splitByMediaType(group.map(\.url))
+                let imageAndOtherURLs = group.map(\.url).filter { !qtURLs.contains($0) }
+
+                if !imageAndOtherURLs.isEmpty {
+                    let result = await runBackground { ExifToolService.writeDateTimeOriginal(cleanedValue, to: imageAndOtherURLs) }
+                    if !result.success {
+                        preWriteError = ExifToolService.parseErrorSummary(result.output)
+                        break
+                    }
+                }
+
+                // For QuickTime videos, write only QuickTime:CreationDate (NOT DateTimeOriginal)
+                // to avoid creating XMP tags that read back as ISO 8601
+                if !qtURLs.isEmpty {
+                    let result = await runBackground {
+                        ExifToolService.writeQuickTimeCreationDate(cleanedValue, to: qtURLs)
+                    }
+                    if !result.success {
+                        preWriteError = ExifToolService.parseErrorSummary(result.output)
+                        break
+                    }
                 }
             }
         }

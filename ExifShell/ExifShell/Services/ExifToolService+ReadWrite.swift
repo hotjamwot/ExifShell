@@ -70,11 +70,13 @@ extension ExifToolService {
         let sourceFile: String
         let dateTimeOriginal: String?
         let createDate: String?
+        let quickTimeCreationDate: String?
 
         enum CodingKeys: String, CodingKey {
             case sourceFile = "SourceFile"
             case dateTimeOriginal = "DateTimeOriginal"
             case createDate = "CreateDate"
+            case quickTimeCreationDate = "QuickTime:CreationDate"
         }
     }
 
@@ -99,10 +101,12 @@ extension ExifToolService {
         let duration: String?
         let imageWidth: String?
         let imageHeight: String?
+        let quickTimeCreationDate: String?
 
         enum CodingKeys: String, CodingKey {
             case sourceFile = "SourceFile"
             case dateTimeOriginal = "DateTimeOriginal"
+            case quickTimeCreationDate = "QuickTime:CreationDate"
             case createDate = "CreateDate"
             case modifyDate = "ModifyDate"
             case fileModifyDate = "FileModifyDate"
@@ -161,6 +165,7 @@ extension ExifToolService {
             } else {
                 duration = nil
             }
+            quickTimeCreationDate = try container.decodeIfPresent(String.self, forKey: .quickTimeCreationDate)
             if let w = try? container.decode(Int.self, forKey: .imageWidth) {
                 imageWidth = "\(w)"
             } else if let w = try? container.decode(String.self, forKey: .imageWidth) {
@@ -206,7 +211,7 @@ extension ExifToolService {
             return Dictionary(uniqueKeysWithValues: urls.map { ($0, nil as String?) })
         }
 
-        let result = runReadTool(with: ["-json", "-DateTimeOriginal", "-CreateDate"] + urls.map(\.path))
+        let result = runReadTool(with: ["-json", "-DateTimeOriginal", "-CreateDate", "-QuickTime:CreationDate"] + urls.map(\.path))
         guard !result.stdoutData.isEmpty,
               let json = try? decoder.decode([DateTimeFallbackOutput].self, from: result.stdoutData) else {
             return Dictionary(uniqueKeysWithValues: urls.map { ($0, nil as String?) })
@@ -220,7 +225,8 @@ extension ExifToolService {
         for entry in json {
             let entryPath = (entry.sourceFile as NSString).standardizingPath
             if let originalURL = pathLookup[entryPath] {
-                results[originalURL] = entry.dateTimeOriginal ?? entry.createDate
+                let rawDate = entry.quickTimeCreationDate ?? entry.dateTimeOriginal ?? entry.createDate
+                results[originalURL] = rawDate.flatMap(ExifToolService.normalizeToExifDate)
             }
         }
         for url in urls {
@@ -248,6 +254,7 @@ extension ExifToolService {
         let args = [
             "-json",
             "-DateTimeOriginal",
+            "-QuickTime:CreationDate",
             "-CreateDate",
             "-ModifyDate",
             "-FileModifyDate",
@@ -279,14 +286,17 @@ extension ExifToolService {
             guard let originalURL = pathLookup[entryPath] else { continue }
             let dateSource: ExifToolService.DateSource?
             let dto: String?
-            if let dtoValue = entry.dateTimeOriginal {
-                dto = dtoValue
+            if let qtcValue = entry.quickTimeCreationDate {
+                dto = ExifToolService.normalizeToExifDate(qtcValue)
+                dateSource = .dateTimeOriginal
+            } else if let dtoValue = entry.dateTimeOriginal {
+                dto = ExifToolService.normalizeToExifDate(dtoValue)
                 dateSource = .dateTimeOriginal
             } else if let cdValue = entry.createDate {
-                dto = cdValue
+                dto = ExifToolService.normalizeToExifDate(cdValue)
                 dateSource = .createDate
             } else if let fmdValue = entry.fileModifyDate {
-                dto = fmdValue
+                dto = ExifToolService.normalizeToExifDate(fmdValue)
                 dateSource = .fileModifyDate
             } else {
                 dto = nil
@@ -380,8 +390,7 @@ extension ExifToolService {
                 "-m",
                 "-QuickTime:CreationDate=\(value)",
                 "-CreateDate=\(value)",
-                "-ModifyDate=\(value)",
-                "-DateTimeOriginal=\(value)"
+                "-ModifyDate=\(value)"
             ] + quickTimeURLs.map(\.path)
             let result = runWriteTool(with: args)
             if !result.success { allSucceeded = false }
@@ -404,6 +413,33 @@ extension ExifToolService {
         let combined = outputs.joined(separator: "\n")
         let anyEmpty = imageURLs.isEmpty && quickTimeURLs.isEmpty && otherVideoURLs.isEmpty
         return WriteResult(success: allSucceeded || anyEmpty, output: combined)
+    }
+
+    /// Writes only `QuickTime:CreationDate` to QuickTime video files, without
+    /// setting `-DateTimeOriginal=`. This is used by the sanitise Phase 1
+    /// pre-write to avoid creating XMP-style DateTimeOriginal tags in
+    /// QuickTime containers (which ExifTool reads back in ISO 8601 format,
+    /// e.g. "2011-03-16T11:55:13+00:00", defeating the sanitise).
+    ///
+    /// - Parameters:
+    ///   - value: The date string to write (e.g. "2011:03:16 11:55:13").
+    ///   - urls: The QuickTime file URLs to apply the change to.
+    /// - Returns: A WriteResult with success status and captured output/error.
+    static func writeQuickTimeCreationDate(_ value: String, to urls: [URL]) -> WriteResult {
+        guard !urls.isEmpty else {
+            return WriteResult(success: false, output: "No files provided.")
+        }
+        if let error = missingToolError {
+            return WriteResult(success: false, output: error)
+        }
+        let args: [String] = [
+            "-overwrite_original",
+            "-m",
+            "-QuickTime:CreationDate=\(value)",
+            "-CreateDate=\(value)",
+            "-ModifyDate=\(value)"
+        ] + urls.map(\.path)
+        return runWriteTool(with: args)
     }
 
     /// Writes a description value to all description-related tags.
@@ -518,8 +554,7 @@ extension ExifToolService {
                     "-m",
                     #"-QuickTime:CreationDate<${QuickTime:CreationDate;DateFmt("%Y:%m:%d %H:%M:%S")}"#,
                     "-CreateDate<QuickTime:CreationDate",
-                    "-ModifyDate<QuickTime:CreationDate",
-                    "-Description<Description"
+                    "-ModifyDate<QuickTime:CreationDate"
                 ] + quickTimeURLs.map(\.path)
                 let result = runWriteTool(with: args)
                 if !result.success { allSucceeded = false }
@@ -531,8 +566,7 @@ extension ExifToolService {
                     "-m",
                     #"-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}"#,
                     "-CreateDate<DateTimeOriginal",
-                    "-ModifyDate<DateTimeOriginal",
-                    "-Description<Description"
+                    "-ModifyDate<DateTimeOriginal"
                 ] + otherVideoURLs.map(\.path)
                 let result = runWriteTool(with: args)
                 if !result.success { allSucceeded = false }

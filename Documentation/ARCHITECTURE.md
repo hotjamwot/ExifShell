@@ -75,7 +75,7 @@ All state management uses Apple's `@Observable` macro (macOS 14+ Observation fra
 ## Directory Structure
 
 ```
-Sources/
+ExifShell/ExifShell/
 ├── ExifShellApp.swift          # @main app entry point, activation policy
 ├── ContentView.swift           # Root view: drop zone ↔ split pane + drop, bulk edit bars, status, shortcuts
 ├── Models/
@@ -149,6 +149,7 @@ Sources/
   4. Only marks a file clean if ALL its field writes succeeded.
   5. Updates independent feedback for date and description saves.
 - `sanitiseSelected()` — operates on the **currently selected files** (`selectedFiles`). Saves dirty files first, then runs a **Phase 1 pre-write** for files whose `dateSource == .fileModifyDate` (these have no embedded date tag on disk, so the main sanitise pipeline would silently do nothing). The pre-write writes each file's own in-memory date value (timezone stripped) to a proper `DateTimeOriginal`/`QuickTime:CreationDate` tag, then the main pipeline processes files in **batches of 80** with live determinate progress (`"Sanitising (X/Y)..."`), skips unwritable formats (AVI, MPEG) with a warning, then re-reads all metadata from disk to refresh the display.
+- `sanitiseAll()` — runs the same sanitise pipeline for all loaded files, not just selected files.
 - `renameAll()` — saves dirty files first, then processes files in **batches of 80** with live determinate progress (`"Renaming (X/Y)..."`), calls `ExifToolService.renameFiles()` with the in-memory metadata content, updates the in-memory URL for each renamed file from the returned path mapping.
 
 ### DropZoneView
@@ -252,10 +253,10 @@ AVI and MPEG files cannot be written to by ExifTool. The rename pipeline detects
 ## Build & Run
 
 ```bash
-swift run
+xcodebuild -project ExifShell.xcodeproj -scheme ExifShell build
 ```
 
-Or open `Package.swift` in Xcode and run.
+Or open `ExifShell.xcodeproj` in Xcode and run.
 
 ## Keyboard Shortcuts
 
@@ -313,8 +314,7 @@ exiftool -overwrite_original \
 exiftool -overwrite_original \
   '-QuickTime:CreationDate<${QuickTime:CreationDate;DateFmt("%Y:%m:%d %H:%M:%S")}' \
   '-CreateDate<QuickTime:CreationDate' \
-  '-ModifyDate<QuickTime:CreationDate' \
-  '-Description<Description'
+  '-ModifyDate<QuickTime:CreationDate'
 ```
 
 **Other Videos:**
@@ -322,8 +322,7 @@ exiftool -overwrite_original \
 exiftool -overwrite_original \
   '-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}' \
   '-CreateDate<DateTimeOriginal' \
-  '-ModifyDate<DateTimeOriginal' \
-  '-Description<Description'
+  '-ModifyDate<DateTimeOriginal'
 ```
 
 This is exposed via `ExifToolService.sanitise(_ urls:)` and triggered by `FileListViewModel.sanitiseSelected()`. The "Sanitise Selected" button appears in the PreviewPanel alongside Save and Rename buttons.

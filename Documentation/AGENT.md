@@ -1,4 +1,4 @@
-# AI Context — ExifShell
+\# AI Context — ExifShell
 
 This file is designed to give an AI assistant (or a future developer) the minimum context needed to understand and modify ExifShell safely and correctly.
 
@@ -10,7 +10,7 @@ Media support:
 - **Images**: JPEG, PNG, HEIC, RAW (CR2, CR3, NEF, ARW, DNG, ORF, RW2, SR2), TIFF, GIF, BMP, WebP, ICO, PSD
 - **Videos**: MP4, MOV, M4V, AVI, MKV, WMV, FLV, WebM, TS, MTS, M2TS, 3GP, 3G2, OGV, MXF, MPG, MPEG
 
-For images, `DateTimeOriginal` maps to `EXIF:DateTimeOriginal`; for QuickTime videos (MP4, MOV, M4V), it maps to `QuickTime:CreationDate`; for other videos (AVI, MPG, etc.), ExifTool maps it to the container-specific tag (e.g. `RIFF:DateTimeOriginal` for AVI). Description works on both, but videos only write to the `Description` tag (not `ImageDescription`/`Caption-Abstract`, which are EXIF/IPTC only).
+For images, `DateTimeOriginal` maps to `EXIF:DateTimeOriginal`; for QuickTime videos (MP4, MOV, M4V), it maps to `QuickTime:CreationDate`; for other videos (AVI, MKV, etc.), ExifTool maps it to the container-specific tag. Description works on both, but videos only write to the `Description` tag (not `ImageDescription`/`Caption-Abstract`, which are EXIF/IPTC only).
 
 **Unwritable formats**: AVI, MPG, and MPEG files can be read but not modified by ExifTool. The app detects these and skips them during save operations with a warning. These files are renamed via `FileManager` instead, using in-memory metadata.
 
@@ -20,15 +20,15 @@ For images, `DateTimeOriginal` maps to `EXIF:DateTimeOriginal`; for QuickTime vi
 
 | File | Purpose |
 |---|---|
-| `Sources/ExifShellApp.swift` | `@main` entry point. Sets activation policy, brings app to front, sets default window size (1100×680). |
-| `Sources/ContentView.swift` | Root view. Shows `DropZoneView` when empty, or `HSplitView` (table + preview) when files loaded. Owns all drop handling, two bulk edit bars (date & description), status bar, app-wide keyboard shortcuts (⌘K, ⌘S, ⌫ Delete), and loading overlay. |
-| `Sources/Models/ImageFile.swift` | `@Observable` class: `url`, `filename`, `mediaType` (`.image` / `.video`), `dateTimeOriginal`, `description` (both editable with dirty tracking), read-only `createDate`, `modifyDate`, `imageDescription`, `captionAbstract`, `subject`, `keywords`, `lastKeywordXMP`, `thumbnail`, `duration`, `resolution`, `fileModifyDate`, `dateSource`. Generates thumbnails for videos via AVAssetImageGenerator. |
-| `Sources/ViewModels/FileListViewModel.swift` | `@Observable` class: all state (`files[]`, `selectedFile`, `selectedFiles[]`, `bulkEditValue`, `bulkEditDescriptionValue`), import (batch full metadata read), select, save (saves date + description independently, handles image/video tag differences), clear, bulk edit (date & description with separate text fields), sanitise (with Phase 1 pre-write for filesystem-date files), rename. |
-| `Sources/Services/ExifToolService.swift` | Core shell wrapper: static methods for read/write/sanitise operations. All Process boilerplate centralised into `runReadTool` / `runWriteTool` helpers. Supports batch full reads (`readAllMetadata` returns `[URL: FileMetadata]` with `DateSource` tracking), batch date writes (splits images/videos by extension), batch description writes (videos get `-Description=` only), `sanitise()` (image-specific or video-specific pipelines). Also contains JSON decoding types (`DateTimeFallbackOutput`, `FullExifToolOutput`), media type helpers (`videoExtensions`, `splitByMediaType`, `isUnwritableVideo`), and shared infrastructure (`ReadResult`, `WriteResult`, `decoder`, `missingToolError`, `runReadTool`, `runWriteTool`). |
-| `Sources/Services/ExifToolService+Rename.swift` | Extension on `ExifToolService` containing all rename-related functionality. Declares `RenameResult`, `RenameInput`, `renameFiles()`, `renameWritableFiles()` (ExifTool-based with pre-sorted tag passes), `renameUnwritableFiles()` (FileManager-based for AVI/MPEG), `detectTagCategories()` (single ExifTool read to classify files), `computeExpectedRenameURL()` (fallback path computation), `parseRenamedPaths()` (regex for `-v` output), `DateTagCategory` enum, and date/description formatters. |
-| `Sources/Views/DropZoneView.swift` | Visual drop zone (drop handling in ContentView). |
-| `Sources/Views/FileTableView.swift` | SwiftUI `List` with multi-select (`Set<ImageFile.ID>`), editable date + description columns, orange text when dirty, sortable headers. |
- | `Sources/Views/PreviewPanel.swift` | Thumbnail + diff review (date & description) + read-only metadata display. Action buttons in 2-column layout: Save Selected/All, Rename Selected/All, Sanitise Selected. Shows video badges (media type badge, duration, resolution) for `.video` files. Date/Time Original row shows a source badge (EXIF / CreateDate / File System) indicating where the date value came from. |
+| `ExifShell/ExifShell/ExifShellApp.swift` | `@main` entry point. Sets activation policy, brings app to front, sets default window size (1100×680). |
+| `ExifShell/ExifShell/ContentView.swift` | Root view. Shows `DropZoneView` when empty, or `HSplitView` (table + preview) when files loaded. Owns all drop handling, two bulk edit bars (date & description), status bar, app-wide keyboard shortcuts (⌘K, ⌘S, ⌫ Delete), and loading overlay. |
+| `ExifShell/ExifShell/Models/ImageFile.swift` | `@Observable` class: `url`, `filename`, `mediaType` (`.image` / `.video`), `dateTimeOriginal`, `description` (both editable with dirty tracking), read-only `createDate`, `modifyDate`, `imageDescription`, `captionAbstract`, `subject`, `keywords`, `lastKeywordXMP`, `thumbnail`, `duration`, `resolution`, `fileModifyDate`, `dateSource`. Generates thumbnails for videos via AVAssetImageGenerator. |
+| `ExifShell/ExifShell/ViewModels/FileListViewModel.swift` | `@Observable` class: all state (`files[]`, `selectedFile`, `selectedFiles[]`, `bulkEditValue`, `bulkEditDescriptionValue`), import (batch full metadata read), select, save (saves date + description independently, handles image/video tag differences), clear, bulk edit (date & description with separate text fields), sanitise (with Phase 1 pre-write for filesystem-date files), rename. |
+| `ExifShell/ExifShell/Services/ExifToolService.swift` | Core shell wrapper: static methods for read/write/sanitise operations. All Process boilerplate centralised into `runReadTool` / `runWriteTool` helpers. Supports batch full reads (`readAllMetadata` returns `[URL: FileMetadata]` with `DateSource` tracking), batch date writes (splits images/videos by extension), batch description writes (videos get `-Description=` only), `sanitise()` (image-specific or video-specific pipelines). Also contains JSON decoding types (`DateTimeFallbackOutput`, `FullExifToolOutput`), media type helpers (`videoExtensions`, `splitByMediaType`, `isUnwritableVideo`), and shared infrastructure (`ReadResult`, `WriteResult`, `decoder`, `missingToolError`, `runReadTool`, `runWriteTool`). |
+| `ExifShell/ExifShell/Services/ExifToolService+Rename.swift` | Extension on `ExifToolService` containing all rename-related functionality. Declares `RenameResult`, `RenameInput`, `renameFiles()`, `renameWritableFiles()` (ExifTool-based with pre-sorted tag passes), `renameUnwritableFiles()` (FileManager-based for AVI/MPEG), `detectTagCategories()` (single ExifTool read to classify files), `computeExpectedRenameURL()` (fallback path computation), `parseRenamedPaths()` (regex for `-v` output), `DateTagCategory` enum, and date/description formatters. |
+| `ExifShell/ExifShell/Views/DropZoneView.swift` | Visual drop zone (drop handling in ContentView). |
+| `ExifShell/ExifShell/Views/FileTableView.swift` | SwiftUI `List` with multi-select (`Set<ImageFile.ID>`), editable date + description columns, orange text when dirty, sortable headers. |
+| `ExifShell/ExifShell/Views/PreviewPanel.swift` | Thumbnail + diff review (date & description) + read-only metadata display. Action buttons in 2-column layout: Save Selected/All, Sanitise Selected/All, Rename Selected/All. Shows video badges (media type badge, duration, resolution) for `.video` files. Date/Time Original row shows a source badge (EXIF / CreateDate / File System) indicating where the date value came from, and the metadata section now includes `File Modification Date/Time` with a copy button. |
 
 ---
 
@@ -43,7 +43,7 @@ For images, `DateTimeOriginal` maps to `EXIF:DateTimeOriginal`; for QuickTime vi
 5. **`PreviewPanel.swift`**: Add a new diff section for the field.
 
 ### Adding a new view
-- Create file in `Sources/Views/`.
+- Create file in `ExifShell/ExifShell/Views/`.
 - Pass `FileListViewModel` as `let` (not `@ObservedObject` — using `@Observable`).
 - Add it to `ContentView.swift` or nest inside an existing view.
 
@@ -95,11 +95,13 @@ static func writeDescription(_ value: String, to urls: [URL]) -> WriteResult {
 | Read (full batch) | `exiftool -json -DateTimeOriginal -CreateDate -ModifyDate -FileModifyDate -Description -ImageDescription -Caption-Abstract -Subject -Keywords -LastKeywordXMP -Duration -ImageWidth -ImageHeight <files...>` |
 | Read (date only) | `exiftool -json -DateTimeOriginal <files...>` |
 | Write (date batch, images) | `exiftool -overwrite_original -EXIF:DateTimeOriginal="<value>" -CreateDate="<value>" -ModifyDate="<value>" -OffsetTime= -OffsetTimeOriginal= -OffsetTimeDigitized= <files...>` |
-| Write (date batch, videos) | `exiftool -overwrite_original -QuickTime:CreationDate="<value>" -CreateDate="<value>" -ModifyDate="<value>" -DateTimeOriginal="<value>" <files...>` |
+| Write (date batch, QuickTime videos) | `exiftool -overwrite_original -QuickTime:CreationDate="<value>" -CreateDate="<value>" -ModifyDate="<value>" -DateTimeOriginal="<value>" <files...>` |
+| Write (date batch, other videos) | `exiftool -overwrite_original -DateTimeOriginal="<value>" -CreateDate="<value>" -ModifyDate="<value>" <files...>` |
 | Write (desc batch, images) | `exiftool -overwrite_original -Description="<value>" -ImageDescription="<value>" -Caption-Abstract="<value>" <files...>` |
 | Write (desc batch, videos) | `exiftool -overwrite_original -Description="<value>" <files...>` |
 | Sanitise (images) | `exiftool -overwrite_original '-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}' '-CreateDate<DateTimeOriginal' '-ModifyDate<DateTimeOriginal' -OffsetTime= -OffsetTimeOriginal= -OffsetTimeDigitized= '-ImageDescription<Description' '-Caption-Abstract<Description' <files...>` |
-| Sanitise (videos) | `exiftool -overwrite_original '-QuickTime:CreationDate<${QuickTime:CreationDate;DateFmt("%Y:%m:%d %H:%M:%S")}' '-CreateDate<QuickTime:CreationDate' '-ModifyDate<QuickTime:CreationDate' '-Description<Description' <files...>` |
+| Sanitise (QuickTime videos) | `exiftool -overwrite_original '-QuickTime:CreationDate<${QuickTime:CreationDate;DateFmt("%Y:%m:%d %H:%M:%S")}' '-CreateDate<QuickTime:CreationDate' '-ModifyDate<QuickTime:CreationDate' <files...>` |
+| Sanitise (other videos) | `exiftool -overwrite_original '-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}' '-CreateDate<DateTimeOriginal' '-ModifyDate<DateTimeOriginal' <files...>` |
 | Rename (tag-specific passes) | `exiftool -v -m "-FileName<${CreateDate}_%03.c${Description;if($_){s/'//g;s/[^\p{L}\p{N}]+/_/g;s/^_+|_+$//g;$_="_ ".$_}}.%e" -d %Y_%m_%d_%H%M <files...>` |
 
 ---
@@ -131,8 +133,9 @@ The file table uses a cached `sortedFiles` property in the ViewModel. Bulk edit 
 ### Media Type Detection
 Media type is determined from file extension:
 - `FileListViewModel.mediaType(for:)` returns `.image` or `.video`
-- `ExifToolService.splitByMediaType(_:)` splits URLs for tag-specific write/sanitise operations
-- Videos get `QuickTime:CreationDate` for date writes and sanitise, images get `EXIF:DateTimeOriginal`
+- `ExifToolService.splitByMediaType(_:)` splits URLs into three buckets: images, QuickTime videos (MP4/MOV/M4V), and other videos
+- QuickTime videos get `QuickTime:CreationDate` for date writes and sanitise, images get `EXIF:DateTimeOriginal`
+- Other videos (MKV, WebM, FLV, etc.) use `DateTimeOriginal` (mapped to the container-specific tag by ExifTool)
 
 ### Multi-Select & Bulk Edit
 - `FileTableView` uses `Set<ImageFile.ID>` for selection.
@@ -150,9 +153,11 @@ Media type is determined from file extension:
 - `ExifToolService.sanitise(_ urls:)` runs the full sanitise in one ExifTool invocation per media type:
   - **Images**: Normalises DateTimeOriginal format via `DateFmt("%Y:%m:%d %H:%M:%S")`, propagates to CreateDate/ModifyDate, clears OffsetTime* tags, syncs Description to ImageDescription/Caption-Abstract
   - **QuickTime Videos**: Normalises QuickTime:CreationDate via `DateFmt`, propagates to CreateDate/ModifyDate, syncs Description (no offset tags)
-  - **Other Videos (AVI, MKV, etc.)**: Normalises DateTimeOriginal via `DateFmt`, propagates to CreateDate/ModifyDate, syncs Description
-- `FileListViewModel.sanitiseSelected()` operates on the **currently selected files** (from `selectedFiles`). It first saves any dirty files, then runs a **Phase 1 pre-write** for files whose `dateSource == .fileModifyDate` — these have no embedded date tag on disk, so the main sanitise pipeline would silently do nothing. Each file's own in-memory dateTimeOriginal is written (timezone stripped via `ExifToolService.stripTimezone()`) to the appropriate tag, grouped by stripped value for batching. Then the main pipeline processes files in **batches of 80** with live determinate progress (`"Sanitising (X/Y)..."`), skips unwritable formats (AVI, MPEG) with a warning, then re-reads all metadata from disk to refresh the display.
+  - **Other Videos (MKV, WebM, AVI, etc.)**: Normalises DateTimeOriginal via `DateFmt`, propagates to CreateDate/ModifyDate, syncs Description
+- `FileListViewModel.sanitiseSelected()` operates on the **currently selected files** (from `selectedFiles`). It first saves any dirty files, then runs a **Phase 1 pre-write** for files whose `dateSource == .fileModifyDate` — these have no embedded date tag on disk, so the main sanitise pipeline would silently do nothing. Each file's own in-memory dateTimeOriginal is written (timezone stripped via `ExifToolService.stripTimezone()`) to the appropriate tag (QuickTime:CreationDate for QuickTime videos, DateTimeOriginal for other videos/images), grouped by stripped value for batching. Then the main pipeline processes files in **batches of 80** with live determinate progress (`"Sanitising (X/Y)..."`), skips unwritable formats (AVI, MPEG) with a warning, then re-reads all metadata from disk to refresh the display.
+- `FileListViewModel.sanitiseAll()` runs the same sanitise pipeline for all loaded files, not just selected files.
  - The "Sanitise Selected" button appears in the PreviewPanel alongside Save and Rename buttons, using the `wand.and.rays` SF Symbol.
+ - **Note:** The `-Description<Description` self-copy has been removed from video sanitise commands — videos only have one `Description` tag, making the self-copy a no-op that could produce warnings in some containers.
 
 ### Rename Pipeline
 - Rename logic lives in `ExifToolService+Rename.swift` as an extension on `ExifToolService`.
