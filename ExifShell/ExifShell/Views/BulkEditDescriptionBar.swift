@@ -23,7 +23,7 @@ struct BulkEditDescriptionBar: View {
                 .foregroundColor(.secondary)
                 .font(.caption)
 
-            Text("Set Description for \(viewModel.selectedFiles.count) selected file(s):")
+            Text("Set Description")
                 .font(.caption)
                 .foregroundColor(.secondary)
 
@@ -43,8 +43,17 @@ struct BulkEditDescriptionBar: View {
 
             Spacer()
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.green.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+                )
+        )
+        .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(Color.green.opacity(0.06))
     }
 }

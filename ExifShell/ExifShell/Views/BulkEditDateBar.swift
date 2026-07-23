@@ -22,7 +22,11 @@ struct BulkEditDateBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Picker("Mode", selection: $viewModel.bulkEditMode) {
+            Image(systemName: "calendar")
+                .foregroundColor(.secondary)
+                .font(.caption)
+
+            Picker("", selection: $viewModel.bulkEditMode) {
                 ForEach(FileListViewModel.DateBulkEditMode.allCases) { mode in
                     Text(mode.rawValue).tag(mode)
                 }
@@ -31,10 +35,6 @@ struct BulkEditDateBar: View {
             .frame(width: 140)
 
             if viewModel.bulkEditMode == .set {
-                Image(systemName: "calendar")
-                    .foregroundColor(.secondary)
-                    .font(.caption)
-
                 TextField("e.g. 2024:01:15 14:30:00", text: $viewModel.bulkEditValue)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.caption, design: .monospaced))
@@ -77,8 +77,17 @@ struct BulkEditDateBar: View {
 
             Spacer()
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.accentColor.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+                )
+        )
+        .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(Color.accentColor.opacity(0.06))
     }
 }

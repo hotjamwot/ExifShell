@@ -11,8 +11,8 @@ import UniformTypeIdentifiers
 //
 //   Loaded state (files non-empty):
 //     HSplitView with FileTableView (left) and PreviewPanel (right).
-//     Bulk edit bars appear above the table when 2+ files are selected.
-//     Status bar shows operation progress when active.
+//     Bulk edit bars appear in a footer area at the bottom of the left pane
+//     when 2+ files are selected. Status bar shows operation progress when active.
 //
 // Responsibilities:
 //   - Drag-and-drop: resolves .fileURL providers, separates folders from files
@@ -41,15 +41,20 @@ struct ContentView: View {
                 // Loaded state: show table + preview
                 HSplitView {
                     VStack(spacing: 0) {
-                        // Bulk edit bars — visible when multiple files are selected
-                        if viewModel.selectedFiles.count > 1 {
-                            BulkEditDateBar(viewModel: viewModel)
-                            Divider()
-                            BulkEditDescriptionBar(viewModel: viewModel)
-                        }
-
                         FileTableView(viewModel: viewModel)
                             .frame(minWidth: 420)
+
+                        if viewModel.selectedFiles.count > 1 {
+                            VStack(spacing: 0) {
+                                Divider()
+                                BulkEditDateBar(viewModel: viewModel)
+                                Divider()
+                                BulkEditDescriptionBar(viewModel: viewModel)
+                            }
+                            .background(.ultraThinMaterial)
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                            .animation(.easeInOut(duration: 0.2), value: viewModel.selectedFiles.count > 1)
+                        }
 
                         // Status bar
                         if viewModel.statusMessage != nil || viewModel.operationMessage != nil || viewModel.isLoading || viewModel.isSaving || viewModel.isRenaming {

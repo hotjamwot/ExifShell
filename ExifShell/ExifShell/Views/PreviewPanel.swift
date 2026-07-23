@@ -68,10 +68,6 @@ struct PreviewPanel: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                            Text("Copy actions will use each selected file's own source date.")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
 
                         // Video-specific metadata badge
@@ -129,11 +125,6 @@ struct PreviewPanel: View {
 
                         // --- Editable Fields ---
                         VStack(alignment: .leading, spacing: 16) {
-                            Text("Editable")
-                                .font(.caption.weight(.semibold))
-                                .foregroundColor(.secondary)
-                                .textCase(.uppercase)
-
                             fieldDiffRow(
                                 label: file.editableDateTagLabel,
                                 original: file.originalDateTimeOriginal,
