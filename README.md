@@ -14,7 +14,7 @@ A minimal, high-speed macOS application for inspecting and editing image metadat
 - Drag & drop images or folders
 - View and edit `DateTimeOriginal` metadata in a sortable table with clickable headers
 - View and edit `Description` metadata — written to Description, ImageDescription & Caption-Abstract on save
-- View read-only metadata: CreateDate, ModifyDate, ImageDescription, Caption-Abstract, Subject
+- View read-only metadata: CreateDate, ModifyDate, ImageDescription, Caption-Abstract, Subject, **Camera Make, Camera Model**
 - **Multi-select with ⌘+click** — edit or remove multiple files at once
 - **Bulk edit bar** — when 2+ files are selected, toolbars appear to set DateTimeOriginal or Description on all of them
 - **Bulk copy CreateDate / ModifyDate** — copy each selected file's own source date into its own DateTimeOriginal
@@ -89,8 +89,14 @@ You can open `Package.swift` directly in Xcode and press ▶︎.
 
 - Create Date
 - Modify Date
+- File Modification Date/Time
 - Image Description
 - Caption Abstract
+- Subject
+- Keywords
+- Last Keyword XMP
+- **Camera Make**
+- **Camera Model**
 
 ### Sanitise Pipeline
 
@@ -127,7 +133,7 @@ by grouping files with identical values into a single ExifTool process call.
 
 ### Batch ExifTool Reads
 
-When you drop files, the app processes **all files in a single ExifTool invocation** reading 6 metadata tags at once, rather than spawning one process per file. For 100+ files this is ~50–100× faster than the naive approach.
+When you drop files, the app processes **all files in a single ExifTool invocation** reading 16 metadata tags at once (including Camera Make/Model), rather than spawning one process per file. For 100+ files this is ~50–100× faster than the naive approach.
 
 ### ExifTool Path Resolution
 
@@ -148,19 +154,23 @@ See [Documentation/ARCHITECTURE.md](Documentation/ARCHITECTURE.md) for full deta
 
 ```
 Sources/
-├── ExifShellApp.swift          # App entry point
-├── ContentView.swift           # Root view + bulk edit bars + keyboard shortcuts
-├── Models/ImageFile.swift      # Data model (with dirty state tracking, 6 metadata fields)
+├── ExifShellApp.swift                  # App entry point
+├── ContentView.swift                   # Root view + bulk edit bars + keyboard shortcuts
+├── Models/ImageFile.swift              # Data model (with dirty state tracking, 18+ metadata fields)
 ├── ViewModels/FileListViewModel.swift  # State, logic, batch apply, bulk edit, sanitise
-├── Services/ExifToolService.swift      # ExifTool wrapper (batch reads + writes + sanitise)
+├── Services/
+│   ├── ExifToolService.swift           # ExifTool wrapper (process runners, types)
+│   ├── ExifToolService+Extensions.swift # Media type helpers, error parsing
+│   ├── ExifToolService+ReadWrite.swift # Read/write/sanitise implementations
+│   └── ExifToolService+Rename.swift    # Rename pipeline
 └── Views/
-    ├── DropZoneView.swift      # Drag-and-drop
-    ├── FileTableView.swift     # Metadata table with multi-select, date + desc columns
-    └── PreviewPanel.swift      # Thumbnail + diff + read-only metadata + Save + Sanitise
+    ├── DropZoneView.swift              # Drag-and-drop
+    ├── FileTableView.swift             # Metadata table with camera/date/desc columns
+    └── PreviewPanel.swift              # Thumbnail + diff + read-only metadata + actions
 Documentation/
-├── ARCHITECTURE.md             # Architecture overview
-├── AI_CONTEXT.md               # AI-friendly edit context
-└── BRIEF.md                    # Project vision & roadmap
+├── ARCHITECTURE.md                     # Architecture overview
+├── AGENTS.md                           # AI-friendly edit context
+└── BRIEF.md                            # Project vision & roadmap
 ```
 
 ## License

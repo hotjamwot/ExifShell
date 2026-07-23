@@ -23,14 +23,8 @@ import UniformTypeIdentifiers
 //
 // Types consumed:
 //   - FileListViewModel (all state and action methods)
-//   - DropZoneView / FileTableView / PreviewPanel (child views)
-//
-// Design note:
-//   Bulk edit bars use @ViewBuilder functions for each mode (date set, date
-//   offset, description) rather than a shared component, because each bar
-//   has sufficiently different controls (segmented picker, sign toggle, unit
-//   picker, text field) that a single generic component would be harder to
-//   read than the duplication.
+//   - DropZoneView / FileTableView / PreviewPanel / BulkEditDateBar /
+//     BulkEditDescriptionBar (child views)
 // ============================================================================
 
 struct ContentView: View {
@@ -47,11 +41,11 @@ struct ContentView: View {
                 // Loaded state: show table + preview
                 HSplitView {
                     VStack(spacing: 0) {
-                        // Bulk edit bar — visible when multiple files are selected
+                        // Bulk edit bars — visible when multiple files are selected
                         if viewModel.selectedFiles.count > 1 {
-                            bulkEditBar
+                            BulkEditDateBar(viewModel: viewModel)
                             Divider()
-                            bulkEditDescriptionBar
+                            BulkEditDescriptionBar(viewModel: viewModel)
                         }
 
                         FileTableView(viewModel: viewModel)
@@ -166,106 +160,6 @@ struct ContentView: View {
                 .hidden()
         )
     }
-
-    // MARK: - Bulk Edit Bar (DateTimeOriginal)
-
-    @ViewBuilder
-    private var bulkEditBar: some View {
-        HStack(spacing: 8) {
-            Picker("Mode", selection: $viewModel.bulkEditMode) {
-                ForEach(FileListViewModel.DateBulkEditMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 140)
-
-            if viewModel.bulkEditMode == .set {
-                Image(systemName: "calendar")
-                    .foregroundColor(.secondary)
-                    .font(.caption)
-
-                TextField("e.g. 2024:01:15 14:30:00", text: $viewModel.bulkEditValue)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(width: 220)
-                    .onSubmit { viewModel.applyBulkEdit() }
-            } else {
-                Image(systemName: "clock.arrow.2.circlepath")
-                    .foregroundColor(.secondary)
-                    .font(.caption)
-
-                Button(action: { viewModel.bulkOffsetPositive.toggle() }) {
-                    Text(viewModel.bulkOffsetPositive ? "+" : "−")
-                        .font(.system(.caption, design: .monospaced))
-                        .frame(width: 28, height: 26)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-
-                TextField("0", text: $viewModel.bulkOffsetAmount)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(width: 60)
-                    .onSubmit { viewModel.applyBulkEdit() }
-
-                Picker("Unit", selection: $viewModel.bulkOffsetUnit) {
-                    ForEach(FileListViewModel.BulkOffsetUnit.allCases) { unit in
-                        Text(unit.rawValue).tag(unit)
-                    }
-                }
-                .pickerStyle(.menu)
-                .controlSize(.small)
-                .frame(width: 100)
-            }
-
-            Button("Apply") {
-                viewModel.applyBulkEdit()
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-
-            Spacer()
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(Color.accentColor.opacity(0.06))
-    }
-
-    // MARK: - Bulk Edit Bar (Description)
-
-    @ViewBuilder
-    private var bulkEditDescriptionBar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "pencil")
-                .foregroundColor(.secondary)
-                .font(.caption)
-
-            Text("Set Description for \(viewModel.selectedFiles.count) selected file(s):")
-                .font(.caption)
-                .foregroundColor(.secondary)
-
-            TextField("Description text...", text: $viewModel.bulkEditDescriptionValue)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(.caption, design: .monospaced))
-                .frame(minWidth: 250)
-                .onSubmit {
-                    viewModel.applyBulkEditDescription()
-                }
-
-            Button("Apply") {
-                viewModel.applyBulkEditDescription()
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-
-            Spacer()
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(Color.green.opacity(0.06))
-    }
-
 
     // MARK: - Drop Handling
 

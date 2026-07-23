@@ -28,6 +28,13 @@ import SwiftUI
 // Actions:
 //   - saveAll() / renameAll() on viewModel
 //   - copyCreateDate/ModifyDate to DateTimeOriginal for selected files
+//
+// Types consumed:
+//   - FileListViewModel (ExifShell/ViewModels/FileListViewModel.swift)
+//   - ImageFile (ExifShell/Models/ImageFile.swift)
+//
+// Used by:
+//   - ContentView (ExifShell/ContentView.swift)
 // ============================================================================
 
 struct PreviewPanel: View {
@@ -73,12 +80,12 @@ struct PreviewPanel: View {
                                 Label("Video", systemImage: "film")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
-                                if let duration = file.duration, !duration.isEmpty {
+                                if let duration = file.readOnly.duration, !duration.isEmpty {
                                     Label(duration, systemImage: "clock")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
-                                if let resolution = file.resolution, !resolution.isEmpty {
+                                if let resolution = file.readOnly.resolution, !resolution.isEmpty {
                                     Label(resolution, systemImage: "rectangle")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
@@ -154,53 +161,51 @@ struct PreviewPanel: View {
                                 .textCase(.uppercase)
 
                             // Show only metadata fields that have values
-                            if let v = file.createDate, !v.isEmpty {
+                            if let v = file.readOnly.createDate, !v.isEmpty {
                                 metadataRow(
                                     label: "Create Date",
                                     value: v,
-                                    action: viewModel.selectedFiles.contains { $0.createDate?.isEmpty == false } ? {
+                                    action: viewModel.selectedFiles.contains { $0.readOnly.createDate?.isEmpty == false } ? {
                                         viewModel.copyCreateDateToDateTimeOriginalSelection()
                                     } : nil
                                 )
                             }
 
-                            if let v = file.modifyDate, !v.isEmpty {
+                            if let v = file.readOnly.modifyDate, !v.isEmpty {
                                 metadataRow(
                                     label: "Modify Date",
                                     value: v,
-                                    action: viewModel.selectedFiles.contains { $0.modifyDate?.isEmpty == false } ? {
+                                    action: viewModel.selectedFiles.contains { $0.readOnly.modifyDate?.isEmpty == false } ? {
                                         viewModel.copyModifyDateToDateTimeOriginalSelection()
                                     } : nil
                                 )
                             }
 
-                            if let v = file.fileModifyDate, !v.isEmpty {
-                                metadataRow(
-                                    label: "File Modification Date/Time",
-                                    value: v,
-                                    action: viewModel.selectedFiles.contains { $0.fileModifyDate?.isEmpty == false } ? {
-                                        viewModel.copyFileModifyDateToDateTimeOriginalSelection()
-                                    } : nil
-                                )
-                            }
-
-                            if let v = file.imageDescription, !v.isEmpty {
+                            if let v = file.readOnly.imageDescription, !v.isEmpty {
                                 metadataRow(label: "Image Description", value: v)
                             }
 
-                            if let v = file.captionAbstract, !v.isEmpty {
+                            if let v = file.readOnly.captionAbstract, !v.isEmpty {
                                 metadataRow(label: "Caption Abstract", value: v)
                             }
 
-                            if let v = file.subject, !v.isEmpty {
+                            if let v = file.readOnly.subject, !v.isEmpty {
                                 metadataRow(label: "Subject", value: v)
                             }
 
-                            if let v = file.keywords, !v.isEmpty {
+                            if let v = file.readOnly.cameraMake, !v.isEmpty {
+                                metadataRow(label: "Camera Make", value: v, systemImage: "camera")
+                            }
+
+                            if let v = file.readOnly.cameraModel, !v.isEmpty {
+                                metadataRow(label: "Camera Model", value: v, systemImage: "camera.viewfinder")
+                            }
+
+                            if let v = file.readOnly.keywords, !v.isEmpty {
                                 metadataRow(label: "Keywords", value: v)
                             }
 
-                            if let v = file.lastKeywordXMP, !v.isEmpty {
+                            if let v = file.readOnly.lastKeywordXMP, !v.isEmpty {
                                 metadataRow(label: "Last Keyword XMP", value: v)
                             }
                         }
@@ -483,26 +488,23 @@ struct PreviewPanel: View {
         }
     }
 
-    /// Returns a human-readable badge string for the date source.
-    private func sourceBadgeText(_ source: ExifToolService.DateSource) -> String {
-        switch source {
-        case .dateTimeOriginal:
-            return "EXIF"
-        case .createDate:
-            return "CreateDate"
-        case .fileModifyDate:
-            return "File System"
-        }
-    }
-
-    /// A read-only metadata row: label + monospaced value, with an optional action button.
+    /// A read-only metadata row: label + monospaced value, with an optional action button
+    /// and optional SF icon. When both an SF icon and action are present, the icon renders
+    /// inline next to the label for visual context (e.g. 📷 for camera fields).
     @ViewBuilder
-    private func metadataRow(label: String, value: String?, action: (() -> Void)? = nil) -> some View {
+    private func metadataRow(label: String, value: String?, systemImage: String? = nil, action: (() -> Void)? = nil) -> some View {
         HStack(alignment: .top, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                HStack(spacing: 4) {
+                    if let image = systemImage {
+                        Image(systemName: image)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Text(label)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
                 Text(value?.isEmpty == false ? value! : "—")
                     .font(.system(.body, design: .monospaced))
                     .foregroundColor(.primary)

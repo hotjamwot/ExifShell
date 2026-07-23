@@ -16,6 +16,46 @@ enum MediaType: String, CaseIterable {
 }
 
 // ============================================================================
+// ReadOnlyMetadata
+// ============================================================================
+/// Groups all read-only metadata fields that ExifTool populates during import.
+/// These fields are display-only and never edited by the user.
+///
+/// Stored as a single struct on `ImageFile` to reduce property clutter and
+/// simplify `applyMetadata()` assignment.
+// ============================================================================
+
+struct ReadOnlyMetadata {
+    var createDate: String?
+    var modifyDate: String?
+    var imageDescription: String?
+    var captionAbstract: String?
+    var subject: String?
+    var keywords: String?
+    var lastKeywordXMP: String?
+
+    /// Duration string for video files (e.g. "00:05:30"). nil for images.
+    var duration: String?
+
+    /// Resolution string for video files (e.g. "1920x1080"). nil for images.
+    var resolution: String?
+
+    /// The filesystem modification date from ExifTool's File:FileModifyDate.
+    /// Used as a last-resort fallback for files (e.g. MPG) with no embedded date tags.
+    var fileModifyDate: String?
+
+    /// Where the dateTimeOriginal value came from. nil when dateTimeOriginal is nil.
+    /// Used to display a source indicator in the Preview Panel.
+    var dateSource: ExifToolService.DateSource?
+
+    /// Camera make (e.g. "Apple", "FUJIFILM", "Canon"). Read-only, populated from ExifTool.
+    var cameraMake: String?
+
+    /// Camera model (e.g. "iPhone 15 Pro", "X-T3", "DIGITAL IXUS v"). Read-only, populated from ExifTool.
+    var cameraModel: String?
+}
+
+// ============================================================================
 // ImageFile
 // ============================================================================
 // @Observable class representing a single media file loaded into ExifShell.
@@ -25,7 +65,7 @@ enum MediaType: String, CaseIterable {
 // fields we care about. Two fields are user-editable (DateTimeOriginal,
 // Description) with automatic dirty tracking — editing either one sets
 // `isDirty = true` via `didSet`. The remaining fields are read-only display
-// values populated from ExifTool during import.
+// values populated from ExifTool during import, grouped into `readOnly`.
 //
 // Dirty state pattern:
 //   - `dateTimeOriginal` didSet compares against `originalDateTimeOriginal`
@@ -33,9 +73,9 @@ enum MediaType: String, CaseIterable {
 //   - `markClean()` resets both baselines after a successful save
 //
 // Types referencing this:
-//   - FileListViewModel owns the array of ImageFile instances
-//   - FileTableView binds to individual fields via `@Bindable`
-//   - PreviewPanel reads fields for diff display and read-only metadata
+//   - FileListViewModel (ExifShell/ViewModels/FileListViewModel.swift)
+//   - FileTableView (ExifShell/Views/FileTableView.swift)
+//   - PreviewPanel (ExifShell/Views/PreviewPanel.swift)
 // ============================================================================
 
 @Observable
@@ -78,7 +118,7 @@ final class ImageFile: Identifiable, Hashable {
 
     /// The display label for the source badge shown in the preview.
     var dateSourceLabel: String? {
-        guard let source = dateSource else { return nil }
+        guard let source = readOnly.dateSource else { return nil }
         switch source {
         case .dateTimeOriginal:
             return mediaType == .video && usesQuickTimeCreationDate ? "QuickTime:CreationDate" : "DateTimeOriginal"
@@ -108,27 +148,9 @@ final class ImageFile: Identifiable, Hashable {
 
     // MARK: - Read-Only Display Fields
 
-    var createDate: String?
-    var modifyDate: String?
-    var imageDescription: String?
-    var captionAbstract: String?
-    var subject: String?
-    var keywords: String?
-    var lastKeywordXMP: String?
-
-    /// Duration string for video files (e.g. "00:05:30"). nil for images.
-    var duration: String?
-
-    /// Resolution string for video files (e.g. "1920x1080"). nil for images.
-    var resolution: String?
-
-    /// The filesystem modification date from ExifTool's File:FileModifyDate.
-    /// Used as a last-resort fallback for files (e.g. MPG) with no embedded date tags.
-    var fileModifyDate: String?
-
-    /// Where the dateTimeOriginal value came from. nil when dateTimeOriginal is nil.
-    /// Used to display a source indicator in the Preview Panel.
-    var dateSource: ExifToolService.DateSource?
+    /// All read-only metadata populated by ExifTool during import.
+    /// Assigning a new struct value replaces all fields atomically.
+    var readOnly = ReadOnlyMetadata()
 
     // MARK: - Dirty State
 
@@ -145,17 +167,7 @@ final class ImageFile: Identifiable, Hashable {
         mediaType: MediaType,
         dateTimeOriginal: String = "",
         description: String = "",
-        createDate: String? = nil,
-        modifyDate: String? = nil,
-        imageDescription: String? = nil,
-        captionAbstract: String? = nil,
-        subject: String? = nil,
-        keywords: String? = nil,
-        lastKeywordXMP: String? = nil,
-        duration: String? = nil,
-        resolution: String? = nil,
-        fileModifyDate: String? = nil,
-        dateSource: ExifToolService.DateSource? = nil
+        readOnly: ReadOnlyMetadata = ReadOnlyMetadata()
     ) {
         self.url = url
         self.filename = url.lastPathComponent
@@ -164,17 +176,7 @@ final class ImageFile: Identifiable, Hashable {
         self.dateTimeOriginal = dateTimeOriginal
         self.originalDescription = description
         self.description = description
-        self.createDate = createDate
-        self.modifyDate = modifyDate
-        self.imageDescription = imageDescription
-        self.captionAbstract = captionAbstract
-        self.subject = subject
-        self.keywords = keywords
-        self.lastKeywordXMP = lastKeywordXMP
-        self.duration = duration
-        self.resolution = resolution
-        self.fileModifyDate = fileModifyDate
-        self.dateSource = dateSource
+        self.readOnly = readOnly
         self.thumbnail = Self.generateThumbnail(for: url, mediaType: mediaType)
     }
 

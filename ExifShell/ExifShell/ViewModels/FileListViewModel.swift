@@ -13,32 +13,32 @@ import UniformTypeIdentifiers
 //
 // Key methods:
 //   - importFiles(_:) / importFolder(_:) — validates, deduplicates, batch-reads metadata
-//   - saveAll() — groups dirty files by value for efficient ExifTool batch writes.
-//     Save now incorporates sanitise: writing DateTimeOriginal also writes
-//     CreateDate, ModifyDate, and clears offset tags (images). There is no
-//     separate sanitise step.
-//   - renameAll() — renames files to {CreateDate}_{###}_{Description}.{ext}
+//   - removeSelected() / clearAll() — list management
 //   - applyBulkEdit() / applyBulkEditDescription() — bulk set values on selected files
 //   - copyCreateDateToDateTimeOriginalSelection() / copyModifyDate...() — copy source dates
-//   - removeSelected() / clearAll() — list management
+//   - sanitiseSelected() / sanitiseAll() — normalise dates/sync descriptions
+//
+// Save logic is in FileListViewModel+Save.swift:
+//   - saveAll() / saveSelected() — groups dirty files by value for efficient ExifTool batch writes
+//
+// Rename logic is in FileListViewModel+Rename.swift:
+//   - renameAll() / renameSelected() — renames files to {CreateDate}_{###}_{Description}.{ext}
 //
 // SORTING:
 //   sortedFiles is cached and only re-computed when:
 //   - sortKey or sortAscending changes
 //   - files array is mutated (import, remove, clear)
-//   - files are saved (markClean → invalidateSort)
-//   - metadata is freshly loaded (applyMetadata → invalidateSort)
-//   This prevents the table from re-sorting on every keystroke while editing.
 //
 // Types consumed:
-//   - ImageFile (the data model)
-//   - ExifToolService (static methods for all I/O)
+//   - ImageFile (ExifShell/Models/ImageFile.swift)
+//   - ExifToolService (ExifShell/Services/ExifToolService.swift)
 //
-// Types consuming this:
-//   - ContentView (root view, imports calls importFiles/importFolder)
-//   - FileTableView (reads sortedFiles, selectedFiles)
-//   - PreviewPanel (reads selectedFile, calls saveAll/renameAll)
-//   - DropZoneView (reads isLoading)
+// Used by:
+//   - ContentView (ExifShell/ContentView.swift)
+//   - FileTableView (ExifShell/Views/FileTableView.swift)
+//   - PreviewPanel (ExifShell/Views/PreviewPanel.swift)
+//   - BulkEditDateBar (ExifShell/Views/BulkEditDateBar.swift)
+//   - BulkEditDescriptionBar (ExifShell/Views/BulkEditDescriptionBar.swift)
 // ============================================================================
 
 @MainActor
@@ -55,6 +55,7 @@ class FileListViewModel {
         case filename
         case originalDateTime
         case description
+        case camera
     }
 
     /// Current sort key (defaults to filename).
@@ -77,7 +78,7 @@ class FileListViewModel {
     }
 
     /// Marks the sort cache as stale so it will be rebuilt on the next read.
-    private func invalidateSort() {
+    func invalidateSort() {
         _sortVersion &+= 1
     }
 
@@ -120,6 +121,10 @@ class FileListViewModel {
                     } else {
                         cmp = a.filename.localizedCaseInsensitiveCompare(b.filename)
                     }
+                case .camera:
+                    let ca = "\(a.readOnly.cameraModel ?? "")"  // Sort by model only (most identifiable)
+                    let cb = "\(b.readOnly.cameraModel ?? "")"
+                    cmp = ca.localizedCaseInsensitiveCompare(cb)
                 }
 
                 return sortAscending ? (cmp == .orderedAscending) : (cmp == .orderedDescending)
@@ -137,6 +142,8 @@ class FileListViewModel {
     var operationMessage: String?
     var operationProgress: Double?
     var isSaving = false
+    /// Whether rename is currently running.
+    var isRenaming = false
     var lastSaveFeedback: SaveFeedback?
     var lastDescriptionSaveFeedback: SaveFeedback?
     /// Stores the full error output from the last failed operation (ExifTool stderr/stdout).
@@ -189,12 +196,6 @@ class FileListViewModel {
     var bulkOffsetAmount: String = ""
     var bulkOffsetUnit: BulkOffsetUnit = .hours
 
-    struct SaveFeedback: Equatable {
-        let filename: String
-        let from: String
-        let to: String
-    }
-
     // MARK: - Import
 
     func importFiles(_ urls: [URL]) {
@@ -221,11 +222,7 @@ class FileListViewModel {
                 url: url,
                 mediaType: Self.mediaType(for: url),
                 dateTimeOriginal: "",
-                description: "",
-                createDate: nil,
-                modifyDate: nil,
-                imageDescription: nil,
-                captionAbstract: nil
+                description: ""
             )
         }
         files.append(contentsOf: placeholders)
@@ -282,7 +279,7 @@ class FileListViewModel {
     ///
     /// Increasing the batch size helps keep ExifTool invocations efficient
     /// for dozens of files at once.
-    private func chunked<T>(_ array: [T]) -> [[T]] {
+    func chunked<T>(_ array: [T]) -> [[T]] {
         stride(from: 0, to: array.count, by: metadataBatchSize).map { start in
             Array(array[start..<min(start + metadataBatchSize, array.count)])
         }
@@ -313,19 +310,24 @@ class FileListViewModel {
             if let m = metadata[file.url] {
                 file.dateTimeOriginal = m.dateTimeOriginal ?? ""
                 file.description = m.description ?? ""
-                file.createDate = m.createDate
-                file.modifyDate = m.modifyDate
-                file.imageDescription = m.imageDescription
-                file.captionAbstract = m.captionAbstract
-                file.subject = m.subject
-                file.keywords = m.keywords
-                file.lastKeywordXMP = m.lastKeywordXMP
-                file.duration = m.duration
+
+                var readOnly = ReadOnlyMetadata()
+                readOnly.createDate = m.createDate
+                readOnly.modifyDate = m.modifyDate
+                readOnly.imageDescription = m.imageDescription
+                readOnly.captionAbstract = m.captionAbstract
+                readOnly.subject = m.subject
+                readOnly.keywords = m.keywords
+                readOnly.lastKeywordXMP = m.lastKeywordXMP
+                readOnly.duration = m.duration
                 if let w = m.imageWidth, let h = m.imageHeight {
-                    file.resolution = "\(w)×\(h)"
+                    readOnly.resolution = "\(w)×\(h)"
                 }
-                file.fileModifyDate = m.fileModifyDate
-                file.dateSource = m.dateSource
+                readOnly.fileModifyDate = m.fileModifyDate
+                readOnly.dateSource = m.dateSource
+                readOnly.cameraMake = m.cameraMake
+                readOnly.cameraModel = m.cameraModel
+                file.readOnly = readOnly
             }
             file.markClean()
         }
@@ -370,7 +372,7 @@ class FileListViewModel {
     }
 
     /// Clears transient save feedback when navigating away or re-selecting.
-    private func clearFeedback() {
+    func clearFeedback() {
         lastSaveFeedback = nil
         lastDescriptionSaveFeedback = nil
         lastErrorDetail = nil
@@ -379,26 +381,26 @@ class FileListViewModel {
         operationProgress = nil
     }
 
-    private func beginOperation(message: String, determinate: Bool = false) {
+    func beginOperation(message: String, determinate: Bool = false) {
         operationMessage = message
         operationProgress = determinate ? 0 : nil
         statusMessage = nil
     }
 
-    private func updateOperation(progress: Double, message: String? = nil) {
+    func updateOperation(progress: Double, message: String? = nil) {
         operationProgress = progress
         if let message {
             operationMessage = message
         }
     }
 
-    private func endOperation(successMessage: String?) {
+    func endOperation(successMessage: String?) {
         operationMessage = nil
         operationProgress = nil
         statusMessage = successMessage
     }
 
-    private func runBackground<T>(_ work: @escaping @Sendable () -> T) async -> T {
+    func runBackground<T>(_ work: @escaping @Sendable () -> T) async -> T {
         await Task.detached(priority: .userInitiated) {
             work()
         }.value
@@ -506,7 +508,7 @@ class FileListViewModel {
     /// Copies CreateDate into DateTimeOriginal for each selected file.
     func copyCreateDateToDateTimeOriginalSelection() {
         copyDateFieldToDateTimeOriginal(
-            sourceKeyPath: \ImageFile.createDate,
+            sourceKeyPath: \ImageFile.readOnly.createDate,
             label: "Create Date"
         )
     }
@@ -514,7 +516,7 @@ class FileListViewModel {
     /// Copies ModifyDate into DateTimeOriginal for each selected file.
     func copyModifyDateToDateTimeOriginalSelection() {
         copyDateFieldToDateTimeOriginal(
-            sourceKeyPath: \ImageFile.modifyDate,
+            sourceKeyPath: \ImageFile.readOnly.modifyDate,
             label: "Modify Date"
         )
     }
@@ -522,7 +524,7 @@ class FileListViewModel {
     /// Copies FileModifyDate into DateTimeOriginal for each selected file.
     func copyFileModifyDateToDateTimeOriginalSelection() {
         copyDateFieldToDateTimeOriginal(
-            sourceKeyPath: \ImageFile.fileModifyDate,
+            sourceKeyPath: \ImageFile.readOnly.fileModifyDate,
             label: "File Modification Date/Time"
         )
     }
@@ -553,228 +555,6 @@ class FileListViewModel {
             statusMessage = "Copied \(label) into DateTimeOriginal for \(updatedCount) file(s)."
         } else {
             statusMessage = "Selected files already have matching DateTimeOriginal values."
-        }
-    }
-
-    // MARK: - Save
-
-    /// The number of files with unsaved changes.
-    var dirtyCount: Int { files.filter(\.isDirty).count }
-
-    /// The number of selected files with unsaved changes.
-    var selectedDirtyCount: Int { selectedFiles.filter(\.isDirty).count }
-
-    /// Saves all dirty files in batch — groups by distinct field values
-    /// so that files with the same edits are written together.
-    ///
-    /// Save has been merged with the old sanitise behaviour:
-    /// - For images: writes DateTimeOriginal, CreateDate, ModifyDate, clears offsets
-    /// - For videos: writes QuickTime:CreationDate, CreateDate, ModifyDate
-    /// - Description writes to Description + ImageDescription/Caption-Abstract (images)
-    ///   or Description (videos)
-    func saveAll() {
-        Task { await saveAllAsync() }
-    }
-
-    /// Saves dirty files among the current selection.
-    func saveSelected() {
-        Task { await saveAllAsync(only: selectedFiles) }
-    }
-
-    /// Saves dirty files. When `only` is provided, only those files are
-    /// considered (used by sanitise to avoid saving unrelated dirty files).
-    private func saveAllAsync(only: [ImageFile]? = nil) async -> Bool {
-        let dirtyFiles = (only ?? files).filter(\.isDirty)
-        guard !dirtyFiles.isEmpty else {
-            statusMessage = "No changes to save."
-            return true
-        }
-
-        guard !isSaving else {
-            statusMessage = "Save already in progress."
-            return false
-        }
-
-        // Separate unwritable video files (ExifTool can't write RIFF/AVI or MPEG containers)
-        let unwritableFiles = dirtyFiles.filter { ExifToolService.isUnwritableVideo($0.url) }
-        let writableFiles = dirtyFiles.filter { !ExifToolService.isUnwritableVideo($0.url) }
-
-        isSaving = true
-
-        if unwritableFiles.isEmpty {
-            beginOperation(message: "Saving changes...", determinate: false)
-        } else {
-            beginOperation(message: "Saving changes (skipping \(unwritableFiles.count) unwritable file(s))...", determinate: false)
-        }
-
-        let dateGroupResults = await saveDateGroups(from: writableFiles)
-        let descGroupResults = await saveDescriptionGroups(from: writableFiles)
-
-        // Only mark writable files clean — unwritable files (AVI/MPEG) were
-        // skipped by the save helpers, so their changes were not persisted.
-        // Previously this incorrectly passed dirtyFiles (including unwritable),
-        // causing unwritable files to be silently marked clean despite their
-        // changes never being written to disk.
-        markFilesClean(writableFiles,
-                       dateChanged: dateGroupResults.changedIDs,
-                       dateSaved: dateGroupResults.savedIDs,
-                       descChanged: descGroupResults.changedIDs,
-                       descSaved: descGroupResults.savedIDs)
-
-        // After a successful save, re-sort to reflect any saved value changes
-        invalidateSort()
-
-        lastSaveFeedback = dateGroupResults.feedback
-        lastDescriptionSaveFeedback = descGroupResults.feedback
-
-        let totalSuccess = dateGroupResults.successCount + descGroupResults.successCount
-        let totalFail = dateGroupResults.failCount + descGroupResults.failCount
-        let lastError = dateGroupResults.errorMessage ?? descGroupResults.errorMessage ?? ""
-
-        let aviWarning = unwritableFiles.isEmpty ? "" : " ⚠️ \(unwritableFiles.count) file(s) skipped (ExifTool cannot write AVI/MPEG containers)."
-
-        let finalMessage: String
-        if totalFail == 0 {
-            if unwritableFiles.isEmpty {
-                finalMessage = "✅ Saved \(totalSuccess) file(s)."
-            } else {
-                finalMessage = "✅ Saved \(totalSuccess) file(s).\(aviWarning)"
-            }
-            lastErrorDetail = nil
-        } else if totalSuccess > 0 {
-            finalMessage = "✅ \(totalSuccess) saved, ❌ \(totalFail) failed. Error: \(lastError)\(aviWarning)"
-            lastErrorDetail = lastError
-        } else {
-            finalMessage = "❌ Save failed: \(lastError)\(aviWarning)"
-            lastErrorDetail = lastError
-        }
-
-        isSaving = false
-        endOperation(successMessage: finalMessage)
-        return totalFail == 0
-    }
-
-    // MARK: - Save helpers
-
-    /// Groups files by their pending `dateTimeOriginal` value and writes each group.
-    /// Returns counts and feedback for the caller to aggregate.
-    private struct SaveGroupResult {
-        let successCount: Int
-        let failCount: Int
-        let savedIDs: Set<ImageFile.ID>
-        let changedIDs: Set<ImageFile.ID>
-        let feedback: SaveFeedback?
-        let errorMessage: String?
-    }
-
-    private func saveDateGroups(from dirtyFiles: [ImageFile]) async -> SaveGroupResult {
-        let changedFiles = dirtyFiles.filter { $0.dateTimeOriginal != $0.originalDateTimeOriginal }
-        guard !changedFiles.isEmpty else {
-            return SaveGroupResult(successCount: 0, failCount: 0, savedIDs: [], changedIDs: [], feedback: nil, errorMessage: nil)
-        }
-
-        let groups = Dictionary(grouping: changedFiles) { $0.dateTimeOriginal }
-        let changedIDs = Set(changedFiles.map(\.id))
-        var successCount = 0
-        var failCount = 0
-        var savedIDs: Set<ImageFile.ID> = []
-        var feedback: SaveFeedback?
-        var lastError: String?
-        var completed = 0
-        let total = groups.count
-
-        for (value, group) in groups {
-            let urls = group.map(\.url)
-            let result = await runBackground { ExifToolService.writeDateTimeOriginal(value, to: urls) }
-            completed += 1
-            updateOperation(progress: Double(completed) / Double(total), message: "Saving date \(completed) of \(total)...")
-
-            if result.success {
-                for file in group {
-                    savedIDs.insert(file.id)
-                    feedback = SaveFeedback(
-                        filename: file.filename,
-                        from: file.originalDateTimeOriginal.isEmpty ? "(empty)" : file.originalDateTimeOriginal,
-                        to: file.dateTimeOriginal
-                    )
-                }
-                successCount += group.count
-            } else {
-                failCount += group.count
-                lastError = ExifToolService.parseErrorSummary(result.output)
-            }
-        }
-
-        return SaveGroupResult(
-            successCount: successCount,
-            failCount: failCount,
-            savedIDs: savedIDs,
-            changedIDs: changedIDs,
-            feedback: feedback,
-            errorMessage: lastError
-        )
-    }
-
-    private func saveDescriptionGroups(from dirtyFiles: [ImageFile]) async -> SaveGroupResult {
-        let changedFiles = dirtyFiles.filter { $0.description != $0.originalDescription }
-        guard !changedFiles.isEmpty else {
-            return SaveGroupResult(successCount: 0, failCount: 0, savedIDs: [], changedIDs: [], feedback: nil, errorMessage: nil)
-        }
-
-        let groups = Dictionary(grouping: changedFiles) { $0.description }
-        let changedIDs = Set(changedFiles.map(\.id))
-        var successCount = 0
-        var failCount = 0
-        var savedIDs: Set<ImageFile.ID> = []
-        var feedback: SaveFeedback?
-        var lastError: String?
-        var completed = 0
-        let total = groups.count
-
-        for (value, group) in groups {
-            let urls = group.map(\.url)
-            let result = await runBackground { ExifToolService.writeDescription(value, to: urls) }
-            completed += 1
-            updateOperation(progress: Double(completed) / Double(total), message: "Saving description \(completed) of \(total)...")
-
-            if result.success {
-                for file in group {
-                    savedIDs.insert(file.id)
-                    feedback = SaveFeedback(
-                        filename: file.filename,
-                        from: file.originalDescription.isEmpty ? "(empty)" : file.originalDescription,
-                        to: file.description
-                    )
-                }
-                successCount += group.count
-            } else {
-                failCount += group.count
-                lastError = ExifToolService.parseErrorSummary(result.output)
-            }
-        }
-
-        return SaveGroupResult(
-            successCount: successCount,
-            failCount: failCount,
-            savedIDs: savedIDs,
-            changedIDs: changedIDs,
-            feedback: feedback,
-            errorMessage: lastError
-        )
-    }
-
-    /// Marks files clean only after ALL writes succeed for each field.
-    private func markFilesClean(_ dirtyFiles: [ImageFile],
-                                 dateChanged: Set<ImageFile.ID>,
-                                 dateSaved: Set<ImageFile.ID>,
-                                 descChanged: Set<ImageFile.ID>,
-                                 descSaved: Set<ImageFile.ID>) {
-        for file in dirtyFiles {
-            let dateOK = !dateChanged.contains(file.id) || dateSaved.contains(file.id)
-            let descOK = !descChanged.contains(file.id) || descSaved.contains(file.id)
-            if dateOK && descOK {
-                file.markClean()
-            }
         }
     }
 
@@ -863,7 +643,7 @@ class FileListViewModel {
         let needsPreWrite = writableTargets.filter { file in
             guard !file.dateTimeOriginal.isEmpty else { return false }
             // Files with fileModifyDate source have no embedded tag — pre-write needed
-            if file.dateSource == .fileModifyDate { return true }
+            if file.readOnly.dateSource == .fileModifyDate { return true }
             // Files with non-EXIF date formats (ISO/T with dashes or timezone)
             // need a pre-write. Normalise to EXIF format and compare.
             let normalized = ExifToolService.normalizeToExifDate(file.dateTimeOriginal)
@@ -954,121 +734,6 @@ class FileListViewModel {
         }
 
         isSanitising = false
-    }
-
-    // MARK: - Rename
-
-    /// Whether rename is currently running.
-    var isRenaming = false
-
-    /// Runs the rename pipeline on all loaded files.
-    /// Renames files to: `{Date}_{###}_{Description}.{ext}`
-    ///
-    /// Date source: CreateDate for files that have it (images + QuickTime
-    /// videos), falling back to DateTimeOriginal for files without CreateDate
-    /// (notably AVI/RIFF containers).
-    ///
-    /// Processed in batches of `metadataBatchSize` so the user sees live
-    /// determinate progress and ExifTool isn't overwhelmed with a single
-    /// massive command that appears to hang.
-    func renameAll() {
-        Task { await renameAllAsync() }
-    }
-
-    /// Renames only the currently selected files.
-    func renameSelected() {
-        Task { await renameAllAsync(only: selectedFiles) }
-    }
-
-    /// Renames files. When `only` is provided, only those files are renamed.
-    private func renameAllAsync(only: [ImageFile]? = nil) async {
-        let targets = only ?? files
-        guard !targets.isEmpty else {
-            statusMessage = "No files to rename."
-            return
-        }
-
-        guard !isRenaming else { return }
-
-        // Save any unsaved changes among the targets first
-        let dirtyTargets = targets.filter(\.isDirty)
-        if !dirtyTargets.isEmpty {
-            let saveSucceeded = await saveAllAsync(only: dirtyTargets)
-            if !saveSucceeded {
-                return
-            }
-        }
-
-        isRenaming = true
-        beginOperation(message: "Renaming \(targets.count) file(s)...", determinate: true)
-        clearFeedback()
-
-        let allInputs = targets.map { file in
-            ExifToolService.RenameInput(
-                url: file.url,
-                dateTimeOriginal: file.dateTimeOriginal,
-                description: file.description
-            )
-        }
-        let chunks = chunked(allInputs)
-        let totalChunks = chunks.count
-
-        var totalRenamed = 0
-        var allSucceeded = true
-        var lastError: String?
-
-        for (index, chunk) in chunks.enumerated() {
-            let chunkStartProgress = Double(index) / Double(totalChunks)
-            let chunkEndProgress = Double(index + 1) / Double(totalChunks)
-
-            updateOperation(
-                progress: chunkStartProgress,
-                message: "Renaming (\(index + 1)/\(totalChunks) chunks)..."
-            )
-
-            // Use a progress handler to report per-pass granularity inside each chunk,
-            // so the progress bar doesn't stall during the multi-pass ExifTool rename.
-            let result = await runBackground {
-                ExifToolService.renameFiles(chunk) { passProgress, passMessage in
-                    // Map the per-pass progress (0–1) into the chunk's progress window.
-                    let overallProgress = chunkStartProgress + passProgress * (chunkEndProgress - chunkStartProgress)
-                    Task { @MainActor in
-                        self.updateOperation(
-                            progress: overallProgress,
-                            message: "\(passMessage) (\(index + 1)/\(totalChunks) chunks)"
-                        )
-                    }
-                }
-            }
-
-            if result.success {
-                let mappingCount = result.pathMapping.count
-                totalRenamed += mappingCount
-
-                // Update in-memory URL for each successfully renamed file
-                for file in files {
-                    if let newPath = result.pathMapping[file.url.path] {
-                        let newURL = URL(fileURLWithPath: newPath)
-                        file.updateURL(newURL)
-                    }
-                }
-            } else {
-                allSucceeded = false
-                lastError = ExifToolService.parseErrorSummary(result.output)
-                break
-            }
-        }
-
-        if allSucceeded {
-            endOperation(successMessage: "✅ Renamed \(totalRenamed) file(s) successfully.")
-            lastErrorDetail = nil
-        } else {
-            let errorMsg = lastError ?? "unknown error"
-            endOperation(successMessage: "❌ Rename failed after \(totalRenamed) file(s): \(errorMsg)")
-            lastErrorDetail = errorMsg
-        }
-
-        isRenaming = false
     }
 
     // MARK: - File Type Detection

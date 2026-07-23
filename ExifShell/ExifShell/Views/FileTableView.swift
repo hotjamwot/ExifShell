@@ -15,6 +15,7 @@ import AppKit
 //   - Filename (read-only, sortable, truncates middle)
 //   - DateTimeOriginal (editable, monospaced, orange when dirty)
 //   - Description (editable, monospaced, orange when dirty)
+//   - Camera (read-only, shows model name, tooltip with Make + Model)
 //
 // Selection syncs to:
 //   - viewModel.selectedFile (first selected → preview panel)
@@ -22,6 +23,13 @@ import AppKit
 //
 // Sort syncs to:
 //   - viewModel.sortKey / viewModel.sortAscending (via column header clicks)
+//
+// Types consumed:
+//   - FileListViewModel (ExifShell/ViewModels/FileListViewModel.swift)
+//   - ImageFile (ExifShell/Models/ImageFile.swift)
+//
+// Used by:
+//   - ContentView (ExifShell/ContentView.swift)
 //
 // ===== NSTableView Cell Reuse =====
 // Cell identifiers are based solely on the column ID (e.g. "filename",
@@ -61,9 +69,10 @@ private struct FileTableNSView: NSViewRepresentable {
         tableView.rowHeight = 26
 
         let columnDefs: [(id: String, title: String, width: CGFloat, sortKey: String)] = [
-            ("filename",          "Filename",              200, "filename"),
-            ("dateTimeOriginal",  "Date/Time Original",    200, "dateTimeOriginal"),
-            ("description",       "Description",           300, "description"),
+            ("filename",          "Filename",              160, "filename"),
+            ("dateTimeOriginal",  "Date/Time Original",    180, "dateTimeOriginal"),
+            ("description",       "Description",           280, "description"),
+            ("camera",            "Camera",                140, "camera"),
         ]
 
         for def in columnDefs {
@@ -122,6 +131,7 @@ private struct FileTableNSView: NSViewRepresentable {
         case .filename:         key = "filename"
         case .originalDateTime: key = "dateTimeOriginal"
         case .description:      key = "description"
+        case .camera:           key = "camera"
         }
         let desired = NSSortDescriptor(key: key, ascending: viewModel.sortAscending)
         if tableView.sortDescriptors.first?.key != key
@@ -176,6 +186,21 @@ extension FileTableNSView {
                 cell.textField?.toolTip = file.filename
                 return cell
 
+            case "camera":
+                // Show camera model only (most identifiable), fall back to make if no model
+                let displayText = file.readOnly.cameraModel ?? file.readOnly.cameraMake ?? "—"
+                let cell = dequeueTextCell(tableView: tableView, id: cellID, text: displayText)
+                cell.textField?.lineBreakMode = .byTruncatingMiddle
+                cell.textField?.toolTip = {
+                    switch (file.readOnly.cameraMake, file.readOnly.cameraModel) {
+                    case let (make?, model?): return "\(make) \(model)"
+                    case let (make?, nil):    return make
+                    case let (nil, model?):   return model
+                    default:                  return nil
+                    }
+                }()
+                return cell
+
             case "dateTimeOriginal":
                 // Prepend warning emoji when the date format needs sanitising
                 let displayText = file.needsSanitise ? "⚠️ \(file.dateTimeOriginal)" : file.dateTimeOriginal
@@ -221,6 +246,7 @@ extension FileTableNSView {
             case "filename":         viewModel.sortKey = .filename
             case "dateTimeOriginal": viewModel.sortKey = .originalDateTime
             case "description":      viewModel.sortKey = .description
+            case "camera":           viewModel.sortKey = .camera
             default:                 return
             }
             viewModel.sortAscending = desc.ascending

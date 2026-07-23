@@ -17,6 +17,12 @@ import Foundation
 //   - sanitise()                       — normalise date formats
 //   - DateTimeFallbackOutput           — JSON decoder for readDateTimeOriginal
 //   - FullExifToolOutput               — JSON decoder for readAllMetadata
+//
+// Types consumed:
+//   - ExifToolService (ExifShell/Services/ExifToolService.swift)
+//
+// Used by:
+//   - FileListViewModel (ExifShell/ViewModels/FileListViewModel.swift)
 // ============================================================================
 
 extension ExifToolService {
@@ -42,6 +48,10 @@ extension ExifToolService {
         let fileModifyDate: String?
         /// Where the dateTimeOriginal value came from. nil when dateTimeOriginal is nil.
         let dateSource: DateSource?
+        /// Camera make (e.g. "Apple", "FUJIFILM", "Canon").
+        let cameraMake: String?
+        /// Camera model (e.g. "iPhone 15 Pro", "X-T3", "DIGITAL IXUS v").
+        let cameraModel: String?
     }
 
     /// Indicates which ExifTool tag provided the dateTimeOriginal value.
@@ -60,9 +70,11 @@ extension ExifToolService {
             description: nil, imageDescription: nil, captionAbstract: nil, subject: nil,
             keywords: nil, lastKeywordXMP: nil,
             duration: nil, imageWidth: nil, imageHeight: nil,
-            fileModifyDate: nil, dateSource: nil
+            fileModifyDate: nil, dateSource: nil,
+            cameraMake: nil, cameraModel: nil
         )
     }
+
 
     /// Decoding struct for readDateTimeOriginal fallback — needs both
     /// DateTimeOriginal and CreateDate to implement the video fallback.
@@ -83,36 +95,58 @@ extension ExifToolService {
     /// Internal JSON output shape from ExifTool's `-json` mode.
     /// Only fields we care about are decoded; ExifTool may return many more.
     ///
-    /// Fields added for video support:
-    ///   - Duration (format: "0:02:30" or seconds for images/videos)
-    ///   - ImageWidth, ImageHeight (pixel dimensions — reported by ExifTool for both images and videos)
+    /// Simple string fields use auto-synthesised Codable via `Core`.
+    /// Fields with multiple possible types (String-or-array, String-or-number)
+    /// are decoded manually via property wrappers.
     struct FullExifToolOutput: Decodable {
-        let sourceFile: String
-        let dateTimeOriginal: String?
-        let createDate: String?
-        let modifyDate: String?
-        let fileModifyDate: String?
-        let description: String?
-        let imageDescription: String?
-        let captionAbstract: String?
-        let subject: [String]?
-        let keywords: [String]?
-        let lastKeywordXMP: [String]?
-        let duration: String?
-        let imageWidth: String?
-        let imageHeight: String?
-        let quickTimeCreationDate: String?
+        // MARK: - Auto-synthesised fields
+        struct Core: Decodable {
+            let sourceFile: String
+            let dateTimeOriginal: String?
+            let createDate: String?
+            let modifyDate: String?
+            let fileModifyDate: String?
+            let description: String?
+            let imageDescription: String?
+            let captionAbstract: String?
+            let quickTimeCreationDate: String?
+            let cameraMake: String?
+            let cameraModel: String?
+            let quickTimeMake: String?
+            let quickTimeModel: String?
 
-        enum CodingKeys: String, CodingKey {
-            case sourceFile = "SourceFile"
-            case dateTimeOriginal = "DateTimeOriginal"
-            case quickTimeCreationDate = "QuickTime:CreationDate"
-            case createDate = "CreateDate"
-            case modifyDate = "ModifyDate"
-            case fileModifyDate = "FileModifyDate"
-            case description = "Description"
-            case imageDescription = "ImageDescription"
-            case captionAbstract = "Caption-Abstract"
+            enum CodingKeys: String, CodingKey {
+                case sourceFile = "SourceFile"
+                case dateTimeOriginal = "DateTimeOriginal"
+                case createDate = "CreateDate"
+                case modifyDate = "ModifyDate"
+                case fileModifyDate = "FileModifyDate"
+                case description = "Description"
+                case imageDescription = "ImageDescription"
+                case captionAbstract = "Caption-Abstract"
+                case quickTimeCreationDate = "QuickTime:CreationDate"
+                case cameraMake = "Make"
+                case cameraModel = "Model"
+                case quickTimeMake = "QuickTime:Make"
+                case quickTimeModel = "QuickTime:Model"
+            }
+        }
+
+        /// Decodes either a `[String]` or a single flat `String`.
+        @FlexibleStringArray var subject: [String]?
+        @FlexibleStringArray var keywords: [String]?
+        @FlexibleStringArray var lastKeywordXMP: [String]?
+
+        /// Decodes either a `String` or a `Double` (seconds → HH:MM:SS).
+        @FlexibleDuration var duration: String?
+
+        /// Decodes either an `Int` or a `String`.
+        @FlexibleString var imageWidth: String?
+        @FlexibleString var imageHeight: String?
+
+        let core: Core
+
+        private enum CodingKeys: String, CodingKey {
             case subject = "Subject"
             case keywords = "Keywords"
             case lastKeywordXMP = "LastKeywordXMP"
@@ -122,63 +156,88 @@ extension ExifToolService {
         }
 
         init(from decoder: Decoder) throws {
+            self.core = try Core(from: decoder)
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            sourceFile = try container.decode(String.self, forKey: .sourceFile)
-            dateTimeOriginal = try container.decodeIfPresent(String.self, forKey: .dateTimeOriginal)
-            createDate = try container.decodeIfPresent(String.self, forKey: .createDate)
-            modifyDate = try container.decodeIfPresent(String.self, forKey: .modifyDate)
-            fileModifyDate = try container.decodeIfPresent(String.self, forKey: .fileModifyDate)
-            description = try container.decodeIfPresent(String.self, forKey: .description)
-            imageDescription = try container.decodeIfPresent(String.self, forKey: .imageDescription)
-            captionAbstract = try container.decodeIfPresent(String.self, forKey: .captionAbstract)
-            if let subjects = try? container.decode([String].self, forKey: .subject) {
-                subject = subjects
-            } else if let subjectString = try? container.decode(String.self, forKey: .subject) {
-                subject = [subjectString]
+            _subject = try container.decodeIfPresent(FlexibleStringArray.self, forKey: .subject)
+                ?? FlexibleStringArray(wrappedValue: nil)
+            _keywords = try container.decodeIfPresent(FlexibleStringArray.self, forKey: .keywords)
+                ?? FlexibleStringArray(wrappedValue: nil)
+            _lastKeywordXMP = try container.decodeIfPresent(FlexibleStringArray.self, forKey: .lastKeywordXMP)
+                ?? FlexibleStringArray(wrappedValue: nil)
+            _duration = try container.decodeIfPresent(FlexibleDuration.self, forKey: .duration)
+                ?? FlexibleDuration(wrappedValue: nil)
+            _imageWidth = try container.decodeIfPresent(FlexibleString.self, forKey: .imageWidth)
+                ?? FlexibleString(wrappedValue: nil)
+            _imageHeight = try container.decodeIfPresent(FlexibleString.self, forKey: .imageHeight)
+                ?? FlexibleString(wrappedValue: nil)
+        }
+    }
+
+    // MARK: - Flexible Decoding Property Wrappers
+
+    /// Decodes `[String]?` from either a `[String]` JSON array or a flat `String`.
+    @propertyWrapper
+    struct FlexibleStringArray: Decodable {
+        var wrappedValue: [String]?
+
+        init(wrappedValue: [String]?) {
+            self.wrappedValue = wrappedValue
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let array = try? container.decode([String].self) {
+                wrappedValue = array
+            } else if let single = try? container.decode(String.self) {
+                wrappedValue = [single]
             } else {
-                subject = nil
+                wrappedValue = nil
             }
-            if let keywordsList = try? container.decode([String].self, forKey: .keywords) {
-                keywords = keywordsList
-            } else if let keywordString = try? container.decode(String.self, forKey: .keywords) {
-                keywords = [keywordString]
+        }
+    }
+
+    /// Decodes `String?` from either a `String` value or an `Int`.
+    @propertyWrapper
+    struct FlexibleString: Decodable {
+        var wrappedValue: String?
+
+        init(wrappedValue: String?) {
+            self.wrappedValue = wrappedValue
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let str = try? container.decode(String.self) {
+                wrappedValue = str
+            } else if let int = try? container.decode(Int.self) {
+                wrappedValue = "\(int)"
             } else {
-                keywords = nil
+                wrappedValue = nil
             }
-            if let xmpList = try? container.decode([String].self, forKey: .lastKeywordXMP) {
-                lastKeywordXMP = xmpList
-            } else if let xmpString = try? container.decode(String.self, forKey: .lastKeywordXMP) {
-                lastKeywordXMP = [xmpString]
+        }
+    }
+
+    /// Decodes `String?` from either a `String` (e.g. "0:02:30") or
+    /// a `Double` (seconds) which gets converted to HH:MM:SS format.
+    @propertyWrapper
+    struct FlexibleDuration: Decodable {
+        var wrappedValue: String?
+
+        init(wrappedValue: String?) {
+            self.wrappedValue = wrappedValue
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let str = try? container.decode(String.self) {
+                wrappedValue = str
+            } else if let num = try? container.decode(Double.self) {
+                let hours = Int(num) / 3600
+                let minutes = (Int(num) % 3600) / 60
+                let seconds = Int(num) % 60
+                wrappedValue = String(format: "%d:%02d:%02d", hours, minutes, seconds)
             } else {
-                lastKeywordXMP = nil
-            }
-            // Duration can be a String like "0:02:30" or a number (seconds),
-            // so decode generically
-            if let durationStr = try? container.decode(String.self, forKey: .duration) {
-                duration = durationStr
-            } else if let durationNum = try? container.decode(Double.self, forKey: .duration) {
-                // Convert seconds to HH:MM:SS format for display
-                let hours = Int(durationNum) / 3600
-                let minutes = (Int(durationNum) % 3600) / 60
-                let seconds = Int(durationNum) % 60
-                duration = String(format: "%d:%02d:%02d", hours, minutes, seconds)
-            } else {
-                duration = nil
-            }
-            quickTimeCreationDate = try container.decodeIfPresent(String.self, forKey: .quickTimeCreationDate)
-            if let w = try? container.decode(Int.self, forKey: .imageWidth) {
-                imageWidth = "\(w)"
-            } else if let w = try? container.decode(String.self, forKey: .imageWidth) {
-                imageWidth = w
-            } else {
-                imageWidth = nil
-            }
-            if let h = try? container.decode(Int.self, forKey: .imageHeight) {
-                imageHeight = "\(h)"
-            } else if let h = try? container.decode(String.self, forKey: .imageHeight) {
-                imageHeight = h
-            } else {
-                imageHeight = nil
+                wrappedValue = nil
             }
         }
     }
@@ -237,6 +296,31 @@ extension ExifToolService {
 
     // MARK: - Full Metadata Read (Batch)
 
+    /// The list of ExifTool tags requested in `readAllMetadata`.
+    /// Extracted to a static let so the tag set is visible in one place
+    /// and not re-allocated on every import batch.
+    private static let readAllTags: [String] = [
+        "-json",
+        "-DateTimeOriginal",
+        "-QuickTime:CreationDate",
+        "-CreateDate",
+        "-ModifyDate",
+        "-FileModifyDate",
+        "-Description",
+        "-ImageDescription",
+        "-Caption-Abstract",
+        "-Subject",
+        "-Keywords",
+        "-LastKeywordXMP",
+        "-Duration",
+        "-ImageWidth",
+        "-ImageHeight",
+        "-Make",
+        "-Model",
+        "-QuickTime:Make",
+        "-QuickTime:Model"
+    ]
+
     /// Reads all supported metadata fields from multiple files in a **single** ExifTool invocation.
     ///
     /// For files that don't have DateTimeOriginal (e.g. videos), dateTimeOriginal
@@ -251,25 +335,7 @@ extension ExifToolService {
             return Dictionary(uniqueKeysWithValues: urls.map { ($0, emptyMetadata()) })
         }
 
-        let args = [
-            "-json",
-            "-DateTimeOriginal",
-            "-QuickTime:CreationDate",
-            "-CreateDate",
-            "-ModifyDate",
-            "-FileModifyDate",
-            "-Description",
-            "-ImageDescription",
-            "-Caption-Abstract",
-            "-Subject",
-            "-Keywords",
-            "-LastKeywordXMP",
-            "-Duration",
-            "-ImageWidth",
-            "-ImageHeight"
-        ] + urls.map(\.path)
-
-        let result = runReadTool(with: args)
+        let result = runReadTool(with: Self.readAllTags + urls.map(\.path))
 
         guard !result.stdoutData.isEmpty,
               let json = try? decoder.decode([FullExifToolOutput].self, from: result.stdoutData) else {
@@ -282,20 +348,20 @@ extension ExifToolService {
 
         var results: [URL: FileMetadata] = [:]
         for entry in json {
-            let entryPath = (entry.sourceFile as NSString).standardizingPath
+            let entryPath = (entry.core.sourceFile as NSString).standardizingPath
             guard let originalURL = pathLookup[entryPath] else { continue }
             let dateSource: ExifToolService.DateSource?
             let dto: String?
-            if let qtcValue = entry.quickTimeCreationDate {
+            if let qtcValue = entry.core.quickTimeCreationDate {
                 dto = ExifToolService.normalizeToExifDate(qtcValue)
                 dateSource = .dateTimeOriginal
-            } else if let dtoValue = entry.dateTimeOriginal {
+            } else if let dtoValue = entry.core.dateTimeOriginal {
                 dto = ExifToolService.normalizeToExifDate(dtoValue)
                 dateSource = .dateTimeOriginal
-            } else if let cdValue = entry.createDate {
+            } else if let cdValue = entry.core.createDate {
                 dto = ExifToolService.normalizeToExifDate(cdValue)
                 dateSource = .createDate
-            } else if let fmdValue = entry.fileModifyDate {
+            } else if let fmdValue = entry.core.fileModifyDate {
                 dto = ExifToolService.normalizeToExifDate(fmdValue)
                 dateSource = .fileModifyDate
             } else {
@@ -304,19 +370,21 @@ extension ExifToolService {
             }
             results[originalURL] = FileMetadata(
                 dateTimeOriginal: dto,
-                createDate: entry.createDate,
-                modifyDate: entry.modifyDate,
-                description: entry.description,
-                imageDescription: entry.imageDescription,
-                captionAbstract: entry.captionAbstract,
+                createDate: entry.core.createDate,
+                modifyDate: entry.core.modifyDate,
+                description: entry.core.description,
+                imageDescription: entry.core.imageDescription,
+                captionAbstract: entry.core.captionAbstract,
                 subject: entry.subject?.joined(separator: ", "),
                 keywords: entry.keywords?.joined(separator: ", "),
                 lastKeywordXMP: entry.lastKeywordXMP?.joined(separator: ", "),
                 duration: entry.duration,
                 imageWidth: entry.imageWidth,
                 imageHeight: entry.imageHeight,
-                fileModifyDate: entry.fileModifyDate,
-                dateSource: dateSource
+                fileModifyDate: entry.core.fileModifyDate,
+                dateSource: dateSource,
+                cameraMake: entry.core.cameraMake ?? entry.core.quickTimeMake,
+                cameraModel: entry.core.cameraModel ?? entry.core.quickTimeModel
             )
         }
         for url in urls {

@@ -34,42 +34,47 @@ enum ExifToolService {
     /// Resolved path to the `exiftool` binary.
     /// Searches common installation locations so the app works regardless
     /// of whether it's launched via `swift run`, Xcode, or as a bundled .app.
-    /// (Xcode does not inherit your shell PATH, which is the most common
-    /// reason for ExifTool to appear missing.)
+    /// Xcode can launch with a stripped PATH, so we resolve the binary directly
+    /// from PATH entries and common Homebrew/Cellar locations rather than relying
+    /// on an external `which` probe that can fail in-app.
     private static let exifToolPath: String = {
-        // First, try `which exiftool` using the user's PATH — this helps when
-        // exiftool is installed via Homebrew and the runtime PATH points to it.
-        let whichProcess = Process()
-        whichProcess.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        whichProcess.arguments = ["which", "exiftool"]
-        let whichPipe = Pipe()
-        whichProcess.standardOutput = whichPipe
-        whichProcess.standardError = FileHandle.nullDevice
-        do {
-            try whichProcess.run()
-            whichProcess.waitUntilExit()
-            if whichProcess.terminationStatus == 0 {
-                let data = whichPipe.fileHandleForReading.readDataToEndOfFile()
-                if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
-                    if FileManager.default.isExecutableFile(atPath: path) {
-                        return path
-                    }
-                }
-            }
-        } catch {}
+        let pathEntries = (ProcessInfo.processInfo.environment["PATH"] ?? "")
+            .split(separator: ":", omittingEmptySubsequences: true)
+            .map(String.init)
 
-        // If `which` didn't return an executable path, fall back to common locations.
-        let candidates = [
+        var candidates: [String] = []
+        candidates.append(contentsOf: pathEntries.map { $0 + "/exiftool" })
+        candidates.append(contentsOf: [
             "/opt/homebrew/bin/exiftool",   // Apple Silicon Homebrew
             "/usr/local/bin/exiftool",      // Intel Homebrew
             "/usr/bin/exiftool",            // System install (rare)
             "/opt/local/bin/exiftool",      // MacPorts
-        ]
+            "/opt/homebrew/opt/exiftool/libexec/bin/exiftool",
+            "/usr/local/opt/exiftool/libexec/bin/exiftool"
+        ])
+
         for path in candidates {
             if FileManager.default.isExecutableFile(atPath: path) {
                 return path
             }
         }
+
+        let cellarRoots = [
+            "/opt/homebrew/Cellar/exiftool",
+            "/usr/local/Cellar/exiftool"
+        ]
+        for root in cellarRoots {
+            guard FileManager.default.fileExists(atPath: root) else { continue }
+            if let versions = try? FileManager.default.contentsOfDirectory(atPath: root) {
+                for version in versions.sorted().reversed() {
+                    let candidate = "\(root)/\(version)/bin/exiftool"
+                    if FileManager.default.isExecutableFile(atPath: candidate) {
+                        return candidate
+                    }
+                }
+            }
+        }
+
         return ""  // Will be detected at operation time
     }()
 

@@ -318,17 +318,6 @@ The Description field acts as a single source of truth. On save, its value is wr
 
 ---
 
-## ⚠️ Non-Goals
-
-* Full digital asset management system
-* Replacement for tools like:
-
-  * Adobe Bridge
-  * Photo Mechanic
-* Advanced image organisation workflows
-* Cloud syncing or database storage
-
----
 
 ## 🔥 Success Criteria
 
