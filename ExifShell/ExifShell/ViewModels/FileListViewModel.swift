@@ -150,6 +150,20 @@ class FileListViewModel {
     /// Displayed alongside status messages containing ❌ so users can copy the details.
     var lastErrorDetail: String?
 
+    // MARK: - Quick Stats
+
+    /// Number of image files currently loaded.
+    var imageCount: Int { files.filter { $0.mediaType == .image }.count }
+
+    /// Number of video files currently loaded.
+    var videoCount: Int { files.filter { $0.mediaType == .video }.count }
+
+    /// Number of files with unsaved changes.
+    var dirtyCount: Int { files.filter(\.isDirty).count }
+
+    /// Number of selected files with unsaved changes.
+    var selectedDirtyCount: Int { selectedFiles.filter(\.isDirty).count }
+
     /// The bulk-edit date value being typed (shown in the DateTimeOriginal toolbar when multiple files are selected).
     var bulkEditValue: String = ""
 

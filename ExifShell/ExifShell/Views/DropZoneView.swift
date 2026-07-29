@@ -35,7 +35,7 @@ struct DropZoneView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.gray.opacity(0.3), style: StrokeStyle(lineWidth: 2, dash: [8, 4]))
+                    .stroke(Color(nsColor: .separatorColor), style: StrokeStyle(lineWidth: 2, dash: [8, 4]))
             )
             .padding()
 

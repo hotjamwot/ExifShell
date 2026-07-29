@@ -21,12 +21,6 @@ extension FileListViewModel {
         let to: String
     }
 
-    /// The number of files with unsaved changes.
-    var dirtyCount: Int { files.filter(\.isDirty).count }
-
-    /// The number of selected files with unsaved changes.
-    var selectedDirtyCount: Int { selectedFiles.filter(\.isDirty).count }
-
     // MARK: - Save
 
     /// Saves all dirty files in batch — groups by distinct field values

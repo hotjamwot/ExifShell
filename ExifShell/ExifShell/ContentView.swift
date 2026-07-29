@@ -42,7 +42,7 @@ struct ContentView: View {
                 HSplitView {
                     VStack(spacing: 0) {
                         FileTableView(viewModel: viewModel)
-                            .frame(minWidth: 420)
+                            .frame(minWidth: 200)
 
                         if viewModel.selectedFiles.count > 1 {
                             VStack(spacing: 0) {
@@ -57,51 +57,7 @@ struct ContentView: View {
                         }
 
                         // Status bar
-                        if viewModel.statusMessage != nil || viewModel.operationMessage != nil || viewModel.isLoading || viewModel.isSaving || viewModel.isRenaming {
-                            HStack(spacing: 8) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    if let message = viewModel.operationMessage {
-                                        Text(message)
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    if let status = viewModel.statusMessage {
-                                        Text(status)
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-                                Spacer()
-                                if viewModel.lastErrorDetail != nil {
-                                    Button {
-                                        if let detail = viewModel.lastErrorDetail {
-                                            NSPasteboard.general.clearContents()
-                                            NSPasteboard.general.setString(detail, forType: .string)
-                                        }
-                                    } label: {
-                                        Image(systemName: "doc.on.doc")
-                                            .font(.caption)
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                                    .help("Copy error details to clipboard")
-                                }
-                                if let progress = viewModel.operationProgress {
-                                    ProgressView(value: progress, total: 1.0)
-                                        .scaleEffect(0.7)
-                                        .controlSize(.small)
-                                        .frame(width: 120)
-                                } else {
-                                    ProgressView()
-                                        .scaleEffect(0.7)
-                                        .controlSize(.small)
-                                        .frame(width: 120)
-                                }
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.gray.opacity(0.05))
-                        }
+                        StatusBarView(viewModel: viewModel)
                     }
 
                     PreviewPanel(viewModel: viewModel)
@@ -121,7 +77,7 @@ struct ContentView: View {
             }
 
             if viewModel.isLoading {
-                Color.black.opacity(0.12)
+                Color(nsColor: .windowBackgroundColor).opacity(0.35)
                     .ignoresSafeArea()
                 VStack(spacing: 12) {
                     ProgressView(viewModel.operationMessage ?? "Loading…")

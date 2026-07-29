@@ -9,7 +9,7 @@ File                             → depends on                     → used by
 ├── ExifShellApp.swift           → ContentView                    → (none — @main)
 ├── ContentView.swift            → FileListViewModel              → ExifShellApp
 │                                → DropZoneView, FileTableView
-│                                → PreviewPanel
+│                                → PreviewPanel, StatusBarView
 │                                → BulkEditDateBar, BulkEditDescriptionBar
 ├── Models/ImageFile.swift       → FileListViewModel              → FileTableView, PreviewPanel
 │                                → ExifToolService (DateSource)
@@ -26,6 +26,7 @@ File                             → depends on                     → used by
     ├── DropZoneView.swift       → FileListViewModel              → ContentView
     ├── FileTableView.swift      → FileListViewModel, ImageFile   → ContentView
     ├── PreviewPanel.swift       → FileListViewModel, ImageFile   → ContentView
+    ├── QuickStatsBar.swift      → FileListViewModel              → ContentView (StatusBarView)
     ├── BulkEditDateBar.swift    → FileListViewModel              → ContentView
     └── BulkEditDescriptionBar.swift → FileListViewModel          → ContentView
 ```
@@ -49,7 +50,7 @@ For images, `DateTimeOriginal` maps to `EXIF:DateTimeOriginal`; for QuickTime vi
 | File | Purpose |
 |---|---|
 | `ExifShell/ExifShell/ExifShellApp.swift` | `@main` entry point. Sets activation policy, brings app to front, sets default window size (1100×680). |
-| `ExifShell/ExifShell/ContentView.swift` | Root view. Shows `DropZoneView` when empty, or `HSplitView` (table + preview) when files loaded. Owns all drop handling, status bar, app-wide keyboard shortcuts (⌘K, ⌘S, ⌫ Delete), and loading overlay. Bulk edit bars (`BulkEditDateBar`, `BulkEditDescriptionBar`) are separate view files. |
+| `ExifShell/ExifShell/ContentView.swift` | Root view. Shows `DropZoneView` when empty, or `HSplitView` (table + preview) when files loaded. Owns all drop handling, app-wide keyboard shortcuts (⌘K, ⌘S, ⌫ Delete), and loading overlay. Status bar is delegated to `StatusBarView` (in `QuickStatsBar.swift`). Bulk edit bars (`BulkEditDateBar`, `BulkEditDescriptionBar`) are separate view files. |
 | `ExifShell/ExifShell/Models/ImageFile.swift` | `@Observable` class: `url`, `filename`, `mediaType`, `dateTimeOriginal`, `description` (both editable with dirty tracking), plus `readOnly: ReadOnlyMetadata` struct containing read-only fields (`createDate`, `modifyDate`, `imageDescription`, `captionAbstract`, `subject`, `keywords`, `lastKeywordXMP`, `thumbnail`, `duration`, `resolution`, `fileModifyDate`, `dateSource`, `cameraMake`, `cameraModel`). Generates thumbnails for videos via AVAssetImageGenerator. |
 | `ExifShell/ExifShell/ViewModels/FileListViewModel.swift` | `@Observable` class: all state (`files[]`, `selectedFile`, `selectedFiles[]`, `bulkEditValue`, `bulkEditDescriptionValue`), import (batch full metadata read), select, save (saves date + description independently, handles image/video tag differences), clear, bulk edit (date & description with separate text fields), sanitise (with Phase 1 pre-write for filesystem-date files), rename. |
 | `ExifShell/ExifShell/ViewModels/FileListViewModel+Save.swift` | Extension on `FileListViewModel` containing all save-related logic: `saveAll()`, `saveSelected()`, `saveAllAsync()`, `SaveFeedback`, `SaveGroupResult`, `markFilesClean()`. |
@@ -59,8 +60,9 @@ For images, `DateTimeOriginal` maps to `EXIF:DateTimeOriginal`; for QuickTime vi
 | `ExifShell/ExifShell/Services/ExifToolService+ReadWrite.swift` | Extension on `ExifToolService` containing all read/write/sanitise operations: `readAllMetadata()` (batch full reads returning `[URL: FileMetadata]` with `DateSource` tracking), `readDateTimeOriginal()` (single/batch), `writeDateTimeOriginal()` (batch, splits images/videos by extension), `writeDescription()` (batch, videos get `-Description=` only), `writeQuickTimeCreationDate()` (sanitise pre-write), `sanitise()` (image-specific or video-specific pipelines). Also contains JSON decoding types: `FileMetadata`, `DateSource`, `DateTimeFallbackOutput`, `FullExifToolOutput` (with auto-synthesised `Core` + property wrappers for flexible fields). |
 | `ExifShell/ExifShell/Services/ExifToolService+Rename.swift` | Extension on `ExifToolService` containing all rename-related functionality. Declares `RenameResult`, `RenameInput`, `renameFiles()`, `renameWritableFiles()` (ExifTool-based with pre-sorted tag passes), `renameUnwritableFiles()` (FileManager-based for AVI/MPEG), `detectTagCategories()` (single ExifTool read to classify files), `computeExpectedRenameURL()` (fallback path computation), `parseRenamedPaths()` (regex for `-v` output), `DateTagCategory` enum, and date/description formatters. |
 | `ExifShell/ExifShell/Views/DropZoneView.swift` | Visual drop zone (drop handling in ContentView). |
-| `ExifShell/ExifShell/Views/FileTableView.swift` | SwiftUI `List` with multi-select (`Set<ImageFile.ID>`), editable camera/date/description columns, orange text when dirty, sortable headers. |
-| `ExifShell/ExifShell/Views/PreviewPanel.swift` | Thumbnail + diff review (date & description) + read-only metadata display. Action buttons in 2-column layout: Save Selected/All, Sanitise Selected/All, Rename Selected/All. Shows video badges (media type badge, duration, resolution) for `.video` files. Date/Time Original row shows a source badge (EXIF / CreateDate / File System) indicating where the date value came from. Camera Make/Model shown with SF icons. |
+| `ExifShell/ExifShell/Views/FileTableView.swift` | `NSTableView` (via `NSViewRepresentable`) with multi-select, editable camera/date/description columns, orange text when dirty, sortable headers, and hover row highlighting via a custom `HoverableTableRowView` subclass. |
+| `ExifShell/ExifShell/Views/PreviewPanel.swift` | Thumbnail + diff review (date & description) + read-only metadata display. Action buttons in 2-column layout: Save Selected/All, Sanitise Selected/All, Rename Selected/All. Shows video badges (media type badge, duration, resolution) for `.video` files. Date/Time Original row shows a source badge (EXIF / CreateDate / File System) indicating where the date value came from. Camera Make/Model shown with SF icons. Save feedback badges animate in with a spring transition. |
+| `ExifShell/ExifShell/Views/QuickStatsBar.swift` | Two views: `QuickStatsBar` (compact capsule pill showing total/image/video file counts + animated orange dirty count pill) and `StatusBarView` (status bar at bottom of left pane — wraps QuickStatsBar + operation messages + progress indicator + error copy button). Extracted from ContentView to reduce view-body complexity. |
 | `ExifShell/ExifShell/Views/BulkEditDateBar.swift` | Bulk edit bar for DateTimeOriginal values. Supports Set (enter a date string) and Offset (add/subtract time). Shown above the file table when 2+ files selected. |
 | `ExifShell/ExifShell/Views/BulkEditDescriptionBar.swift` | Bulk edit bar for Description values. Shown below the date bar when 2+ files selected. |
 
@@ -342,6 +344,31 @@ This is fixed — `ExifToolService.exifToolPath` auto-resolves the binary path. 
 | Where bulk edit bars are used | `BulkEditDateBar` or `BulkEditDescriptionBar` | `ContentView.swift` |
 | Where video extensions are listed | `videoExtensions` | `ExifToolService+Extensions.swift` |
 | Where `dateSource` badge text is generated | `dateSourceLabel` | `ImageFile.swift` |
+
+---
+
+## Theme & Style
+
+ExifShell uses **system-adaptive colors** throughout to support both Light and Dark Mode automatically. The app inherits the user's system appearance — no custom theme engine.
+
+**Color conventions:**
+- **Backgrounds**: `Color(nsColor: .windowBackgroundColor)` for status bars, `Color(nsColor: .tertiarySystemFill)` for placeholder fills, `.ultraThinMaterial` for bulk edit bar backgrounds
+- **Borders/dividers**: `Color(nsColor: .separatorColor)` for dashed borders and stroke outlines
+- **Text**: `.primary` for main content, `.secondary` for labels/captions, `.orange` for dirty state, `.green` for save feedback/diffs
+- **Accent fills**: `Color.accentColor.opacity(0.08)` for date bulk edit bar, `Color.green.opacity(0.08)` for description bulk edit bar
+- **Loading overlay**: `Color(nsColor: .windowBackgroundColor).opacity(0.35)` — visible in both modes
+
+**Animations:**
+- Save feedback badges: spring transition (`.move(edge: .trailing).combined(with: .opacity)`, response: 0.4, dampingFraction: 0.7)
+- Dirty count pill: spring animation (response: 0.3, dampingFraction: 0.7) + `.contentTransition(.numericText())` for count changes
+- Save button: `.symbolEffect(.bounce)` on save trigger, `.symbolEffect(.pulse)` while saving, `.contentTransition(.numericText())` for count labels
+- Table hover: `HoverableTableRowView` draws `NSColor.selectedControlColor` at 12% opacity on hover (non-selected rows only)
+- Bulk edit bars: `.transition(.opacity.combined(with: .move(edge: .bottom)))` with `.easeInOut(duration: 0.2)`
+
+**When adding new UI:**
+- Always use `Color(nsColor: ...)` with system colors, never hardcoded `Color.gray.opacity(...)` or `Color.black.opacity(...)`
+- Use `.ultraThinMaterial` or `.tertiarySystemFill` for subtle backgrounds
+- Use `.separatorColor` for borders/strokes
 
 ---
 

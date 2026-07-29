@@ -100,7 +100,7 @@ struct PreviewPanel: View {
                         } else if file.mediaType == .video {
                             // Video with no thumbnail fallback
                             RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.gray.opacity(0.15))
+                                .fill(Color(nsColor: .tertiarySystemFill))
                                 .frame(height: 160)
                                 .overlay(
                                     VStack(spacing: 8) {
@@ -114,7 +114,7 @@ struct PreviewPanel: View {
                                 )
                         } else {
                             RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.gray.opacity(0.15))
+                                .fill(Color(nsColor: .tertiarySystemFill))
                                 .frame(height: 160)
                                 .overlay(
                                     Image(systemName: "photo")
@@ -201,30 +201,42 @@ struct PreviewPanel: View {
                             }
                         }
 
-                        // --- Save Feedback ---
+                        // --- Animated Save Feedback ---
                         if let feedback = viewModel.lastSaveFeedback {
-                            saveFeedbackRow(label: "DTO", feedback: feedback)
+                            animatedSaveFeedbackRow(label: "DTO", feedback: feedback)
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .trailing).combined(with: .opacity),
+                                    removal: .opacity
+                                ))
                         }
                         if let feedback = viewModel.lastDescriptionSaveFeedback {
-                            saveFeedbackRow(label: "Desc", feedback: feedback)
+                            animatedSaveFeedbackRow(label: "Desc", feedback: feedback)
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .trailing).combined(with: .opacity),
+                                    removal: .opacity
+                                ))
                         }
 
+                        // Operation progress (save/rename/sanitise)
                         if viewModel.operationMessage != nil || viewModel.operationProgress != nil {
                             VStack(alignment: .leading, spacing: 6) {
                                 if let message = viewModel.operationMessage {
                                     Text(message)
                                         .font(.caption)
                                         .foregroundColor(.secondary)
+                                        .contentTransition(.numericText())
                                 }
                                 if let progress = viewModel.operationProgress {
                                     ProgressView(value: progress, total: 1.0)
                                         .progressViewStyle(.linear)
+                                        .animation(.easeInOut(duration: 0.2), value: progress)
                                 } else {
                                     ProgressView()
                                         .progressViewStyle(.linear)
                                 }
                             }
                             .padding(.bottom, 8)
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
                         }
 
                         // Save row: Save Selected | Save All
@@ -237,11 +249,13 @@ struct PreviewPanel: View {
                                         ProgressView()
                                             .scaleEffect(0.7)
                                             .controlSize(.small)
+                                            .transition(.scale.combined(with: .opacity))
                                     }
                                     Image(systemName: "square.and.arrow.down")
                                     Text(viewModel.selectedDirtyCount > 0
                                          ? "Save Selected (\(viewModel.selectedDirtyCount))"
                                          : "Save Selected")
+                                        .contentTransition(.numericText())
                                 }
                                 .frame(maxWidth: .infinity)
                             }
@@ -261,6 +275,7 @@ struct PreviewPanel: View {
                                     Text(viewModel.dirtyCount > 0
                                          ? "Save All (\(viewModel.dirtyCount))"
                                          : "Save All")
+                                        .contentTransition(.numericText())
                                 }
                                 .frame(maxWidth: .infinity)
                             }
@@ -512,14 +527,15 @@ struct PreviewPanel: View {
         }
     }
 
-    /// Save feedback badge with animated checkmark.
+    /// Animated save feedback badge with spring entrance and auto-dismiss.
+    /// Slides in from the right with a bounce, shows a checkmark, then fades out.
     @ViewBuilder
-    private func saveFeedbackRow(label: String, feedback: FileListViewModel.SaveFeedback) -> some View {
+    private func animatedSaveFeedbackRow(label: String, feedback: FileListViewModel.SaveFeedback) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundColor(.green)
                 .font(.caption)
-                .symbolEffect(.bounce, options: .repeating)
+                .symbolEffect(.bounce)
             Text("\(label): \(feedback.from) → \(feedback.to)")
                 .font(.system(.caption, design: .monospaced))
                 .foregroundColor(.green)
@@ -529,5 +545,11 @@ struct PreviewPanel: View {
             RoundedRectangle(cornerRadius: 4)
                 .fill(Color.green.opacity(0.08))
         )
+        .padding(.leading, 4)
+        .transition(.asymmetric(
+            insertion: .move(edge: .trailing).combined(with: .opacity),
+            removal: .opacity
+        ))
+        .animation(.spring(response: 0.4, dampingFraction: 0.7), value: viewModel.lastSaveFeedback)
     }
 }

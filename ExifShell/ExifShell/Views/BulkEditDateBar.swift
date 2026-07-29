@@ -81,10 +81,10 @@ struct BulkEditDateBar: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(Color.accentColor.opacity(0.06))
+                .fill(Color.accentColor.opacity(0.08))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+                        .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
                 )
         )
         .padding(.horizontal, 10)

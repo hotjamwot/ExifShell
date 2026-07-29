@@ -87,8 +87,11 @@ ExifShell/ExifShell/
 │   └── ExifToolService+Rename.swift  # Rename extension: pre-sorted tag passes, FileManager-based rename for unwritable formats
 └── Views/
     ├── DropZoneView.swift      # Visual drop zone (drop logic in ContentView)
-    ├── FileTableView.swift     # List with editable DateTimeOriginal + Description + orange dirty + multi-select
-    └── PreviewPanel.swift      # Thumbnail + diff review (date & desc) + read-only metadata + Save/Rename/Sanitise buttons
+    ├── FileTableView.swift     # NSTableView with editable columns + orange dirty + multi-select + hover highlight
+    ├── PreviewPanel.swift      # Thumbnail + diff review (date & desc) + read-only metadata + Save/Rename/Sanitise buttons
+    ├── QuickStatsBar.swift     # QuickStatsBar (file count pill) + StatusBarView (status bar wrapper)
+    ├── BulkEditDateBar.swift   # Bulk edit bar for DateTimeOriginal (Set/Offset modes)
+    └── BulkEditDescriptionBar.swift  # Bulk edit bar for Description
 ```
 
 ## Component Responsibilities
@@ -156,13 +159,18 @@ ExifShell/ExifShell/
 - Purely visual. Shows the empty-state icon and instructions when no files are loaded.
 - All drag-and-drop handling is at the `ContentView` level so it works in all states.
 
+### QuickStatsBar & StatusBarView
+- **QuickStatsBar**: A compact capsule pill showing total file count, image count (📷), video count (🎬), and an animated orange dirty count pill. The dirty pill springs in/out as counts change and uses `.contentTransition(.numericText())` for smooth number animations.
+- **StatusBarView**: The status bar at the bottom of the left pane. Wraps QuickStatsBar + operation/status messages + error copy button + progress indicator (determinate or indeterminate). Extracted from ContentView into its own view to reduce SwiftUI view-body complexity for the Swift type-checker.
+
 ### FileTableView
 - Wraps an `NSTableView` via `NSViewRepresentable` for native column resizing, scroll, and sort indicators.
 - Uses `Set<ImageFile.ID>` for `selection`, enabling multi-select via ⌘+click.
 - Body reads `viewModel.sortedFiles` as an observation dependency — this causes SwiftUI to re-invoke `updateNSView` → `tableView.reloadData()` whenever `invalidateSort()` is called (on any data mutation, including bulk edits).
-- **Sortable headers:** Filename, DateTimeOriginal, and Description columns are clickable with native sort indicator arrows. Sort state syncs to `viewModel.sortKey` / `viewModel.sortAscending`.
+- **Sortable headers:** Filename, DateTimeOriginal, Description, and Camera columns are clickable with native sort indicator arrows. Sort state syncs to `viewModel.sortKey` / `viewModel.sortAscending`.
 - **Orange text:** Editable cells use `.textColor = dirty ? .orange : .labelColor` to visually indicate unsaved changes.
-- **Three columns:** Filename (read-only) | DateTimeOriginal (editable) | Description (editable).
+- **Four columns:** Filename (read-only) | DateTimeOriginal (editable) | Description (editable) | Camera (read-only, model name with Make+Model tooltip).
+- **Hover highlight:** Uses a custom `HoverableTableRowView` (NSTableRowView subclass) with NSTrackingArea to draw a subtle background highlight on mouse hover (non-selected rows only).
 - Selection syncs to both `viewModel.selectedFile` (preview) and `viewModel.selectedFiles` (bulk edit).
 - Cells are dequeued/recycled using `NSTableView.makeView(withIdentifier:owner:)` for performance.
 
@@ -192,11 +200,12 @@ ExifShell/ExifShell/
 - **Two bulk edit bars** (visible when `viewModel.selectedFiles.count > 1`):
   1. **DateTimeOriginal bar** (accent-tinted): text field + "Apply" button for bulk date editing.
   2. **Description bar** (green-tinted): text field + "Apply" button for bulk description editing.
-- **Status bar:** Shows the current `statusMessage` and a `ProgressView` when loading.
+- **Status bar:** Delegated to `StatusBarView` (in `QuickStatsBar.swift`), which shows the QuickStatsBar pill, operation/status messages, error copy button, and a `ProgressView` when loading/saving.
 - **Drop handling:** `onDrop(of:)` resolves URLs, separates files from folders, and calls the ViewModel.
-- **App-wide keyboard shortcuts:** Two hidden `.background(Button(...).keyboardShortcut(...))` modifiers:
+- **App-wide keyboard shortcuts:** Hidden `.background(Button(...).keyboardShortcut(...))` modifiers:
   - `⌘K` → `viewModel.clearAll()`
   - `⌘S` → `viewModel.saveAll()`
+  - `⌫ Delete` → `viewModel.removeSelected()`
 
 ## Data Flow
 

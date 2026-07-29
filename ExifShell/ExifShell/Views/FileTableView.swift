@@ -39,6 +39,12 @@ import AppKit
 // is empty. This avoids destroying and recreating every cell on each
 // reloadData(), which previously happened because identifiers included
 // the row index ("\(columnID)_\(row)").
+//
+// ===== Hover Highlight =====
+// A custom HoverableTableRowView is used as the row view, which tracks
+// mouse hover via NSTrackingArea and applies a subtle background highlight
+// when the mouse is over the row. This gives a polished, native-feeling
+// hover effect without affecting selection highlighting.
 // ============================================================================
 
 struct FileTableView: View {
@@ -137,6 +143,59 @@ private struct FileTableNSView: NSViewRepresentable {
         if tableView.sortDescriptors.first?.key != key
             || tableView.sortDescriptors.first?.ascending != viewModel.sortAscending {
             tableView.sortDescriptors = [desired]
+        }
+    }
+}
+
+// MARK: - HoverableTableRowView
+
+/// A custom NSTableRowView that highlights on mouse hover.
+/// Uses NSTrackingArea to detect mouse enter/exit and applies a subtle
+/// background color change. The highlight is independent of selection state.
+private class HoverableTableRowView: NSTableRowView {
+    private var isHovered = false {
+        didSet {
+            needsDisplay = true
+        }
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        updateTrackingAreas()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        // Remove existing tracking areas
+        trackingAreas.forEach { removeTrackingArea($0) }
+
+        let options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeInActiveApp, .assumeInside]
+        let trackingArea = NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil)
+        addTrackingArea(trackingArea)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+    }
+
+    override func drawBackground(in rect: NSRect) {
+        // Let NSTableView draw the alternating row background first
+        super.drawBackground(in: rect)
+
+        // If hovered and not selected, draw a subtle highlight
+        if isHovered && !isSelected {
+            NSColor.selectedControlColor.withAlphaComponent(0.12).setFill()
+            rect.fill(using: .sourceOver)
+        }
+    }
+
+    override var isSelected: Bool {
+        didSet {
+            needsDisplay = true
         }
     }
 }
@@ -250,6 +309,14 @@ extension FileTableNSView {
             default:                 return
             }
             viewModel.sortAscending = desc.ascending
+        }
+
+        // MARK: Delegate — Row View (Hover Highlight)
+
+        func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+            // Return a custom row view with hover tracking.
+            // NSTableView handles recycling internally for row views.
+            return HoverableTableRowView()
         }
 
         // MARK: Delegate — Selection
