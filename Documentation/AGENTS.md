@@ -154,12 +154,12 @@ static func writeDescription(_ value: String, to urls: [URL]) -> WriteResult {
 | Read (full batch) | `exiftool -json -DateTimeOriginal -QuickTime:CreationDate -CreateDate -ModifyDate -FileModifyDate -Description -ImageDescription -Caption-Abstract -Subject -Keywords -LastKeywordXMP -Duration -ImageWidth -ImageHeight -Make -Model <files...>` |
 | Read (date only) | `exiftool -json -DateTimeOriginal <files...>` |
 | Write (date batch, images) | `exiftool -overwrite_original -EXIF:DateTimeOriginal="<value>" -CreateDate="<value>" -ModifyDate="<value>" -OffsetTime= -OffsetTimeOriginal= -OffsetTimeDigitized= <files...>` |
-| Write (date batch, QuickTime videos) | `exiftool -overwrite_original -QuickTime:CreationDate="<value>" -CreateDate="<value>" -ModifyDate="<value>" -DateTimeOriginal="<value>" <files...>` |
+| Write (date batch, QuickTime videos) | `exiftool -overwrite_original -QuickTime:CreationDate="<value>" -CreateDate="<value>" -ModifyDate="<value>" -MediaCreateDate="<value>" -MediaModifyDate="<value>" -TrackCreateDate="<value>" -TrackModifyDate="<value>" -DateTimeOriginal="<value>" <files...>` |
 | Write (date batch, other videos) | `exiftool -overwrite_original -DateTimeOriginal="<value>" -CreateDate="<value>" -ModifyDate="<value>" <files...>` |
 | Write (desc batch, images) | `exiftool -overwrite_original -Description="<value>" -ImageDescription="<value>" -Caption-Abstract="<value>" <files...>` |
 | Write (desc batch, videos) | `exiftool -overwrite_original -Description="<value>" <files...>` |
 | Sanitise (images) | `exiftool -overwrite_original '-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}' '-CreateDate<DateTimeOriginal' '-ModifyDate<DateTimeOriginal' -OffsetTime= -OffsetTimeOriginal= -OffsetTimeDigitized= '-ImageDescription<Description' '-Caption-Abstract<Description' <files...>` |
-| Sanitise (QuickTime videos) | `exiftool -overwrite_original '-QuickTime:CreationDate<${QuickTime:CreationDate;DateFmt("%Y:%m:%d %H:%M:%S")}' '-CreateDate<QuickTime:CreationDate' '-ModifyDate<QuickTime:CreationDate' <files...>` |
+| Sanitise (QuickTime videos) | `exiftool -overwrite_original '-QuickTime:CreationDate<${QuickTime:CreationDate;DateFmt("%Y:%m:%d %H:%M:%S")}' '-CreateDate<QuickTime:CreationDate' '-ModifyDate<QuickTime:CreationDate' '-MediaCreateDate<QuickTime:CreationDate' '-MediaModifyDate<QuickTime:CreationDate' '-TrackCreateDate<QuickTime:CreationDate' '-TrackModifyDate<QuickTime:CreationDate' <files...>` |
 | Sanitise (other videos) | `exiftool -overwrite_original '-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}' '-CreateDate<DateTimeOriginal' '-ModifyDate<DateTimeOriginal' <files...>` |
 | Rename (tag-specific passes) | `exiftool -v -m "-FileName<${CreateDate}_%03.c${Description;if($_){s/'//g;s/[^\p{L}\p{N}]+/_/g;s/^_+|_+$//g;$_="_ ".$_}}.%e" -d %Y_%m_%d_%H%M <files...>` |
 
@@ -348,7 +348,22 @@ This is fixed — `ExifToolService.exifToolPath` auto-resolves the binary path. 
 ## Build
 
 ```bash
-xcodebuild -target ExifShell -scheme ExifShell build
+# Build Release + copy to ~/Downloads + open the app
+make
+
+# Build only (Release)
+make build
+
+# Copy the already-built .app to ~/Downloads
+make install
+
+# Build, install to ~/Downloads, and open
+make run
+
+# Remove the app from ~/Downloads
+make clean
 ```
+
+The Makefile uses `xcodebuild` under the hood — no Xcode GUI required. It dynamically resolves the `DerivedData` build output path so the `install` target always copies the correct `.app`.
 
 Requires macOS 14+ and `exiftool` on PATH (for the `which` fallback; common Homebrew paths are checked directly).

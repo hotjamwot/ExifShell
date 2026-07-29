@@ -458,7 +458,11 @@ extension ExifToolService {
                 "-m",
                 "-QuickTime:CreationDate=\(value)",
                 "-CreateDate=\(value)",
-                "-ModifyDate=\(value)"
+                "-ModifyDate=\(value)",
+                "-MediaCreateDate=\(value)",
+                "-MediaModifyDate=\(value)",
+                "-TrackCreateDate=\(value)",
+                "-TrackModifyDate=\(value)"
             ] + quickTimeURLs.map(\.path)
             let result = runWriteTool(with: args)
             if !result.success { allSucceeded = false }
@@ -505,7 +509,11 @@ extension ExifToolService {
             "-m",
             "-QuickTime:CreationDate=\(value)",
             "-CreateDate=\(value)",
-            "-ModifyDate=\(value)"
+            "-ModifyDate=\(value)",
+            "-MediaCreateDate=\(value)",
+            "-MediaModifyDate=\(value)",
+            "-TrackCreateDate=\(value)",
+            "-TrackModifyDate=\(value)"
         ] + urls.map(\.path)
         return runWriteTool(with: args)
     }
@@ -622,7 +630,11 @@ extension ExifToolService {
                     "-m",
                     #"-QuickTime:CreationDate<${QuickTime:CreationDate;DateFmt("%Y:%m:%d %H:%M:%S")}"#,
                     "-CreateDate<QuickTime:CreationDate",
-                    "-ModifyDate<QuickTime:CreationDate"
+                    "-ModifyDate<QuickTime:CreationDate",
+                    "-MediaCreateDate<QuickTime:CreationDate",
+                    "-MediaModifyDate<QuickTime:CreationDate",
+                    "-TrackCreateDate<QuickTime:CreationDate",
+                    "-TrackModifyDate<QuickTime:CreationDate"
                 ] + quickTimeURLs.map(\.path)
                 let result = runWriteTool(with: args)
                 if !result.success { allSucceeded = false }
