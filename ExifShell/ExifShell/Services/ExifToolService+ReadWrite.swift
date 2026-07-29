@@ -88,7 +88,7 @@ extension ExifToolService {
             case sourceFile = "SourceFile"
             case dateTimeOriginal = "DateTimeOriginal"
             case createDate = "CreateDate"
-            case quickTimeCreationDate = "QuickTime:CreationDate"
+            case quickTimeCreationDate = "CreationDate"
         }
     }
 
@@ -124,7 +124,7 @@ extension ExifToolService {
                 case description = "Description"
                 case imageDescription = "ImageDescription"
                 case captionAbstract = "Caption-Abstract"
-                case quickTimeCreationDate = "QuickTime:CreationDate"
+                case quickTimeCreationDate = "CreationDate"
                 case cameraMake = "Make"
                 case cameraModel = "Model"
                 case quickTimeMake = "QuickTime:Make"
