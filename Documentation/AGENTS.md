@@ -2,6 +2,10 @@
 
 This file is designed to give an AI assistant (or a future developer) the minimum context needed to understand and modify ExifShell safely and correctly.
 
+## Change Log
+
+Every session should append a brief entry to `Documentation/CHANGELOG.md` — a few lines under `Added` / `Fixed` / `Changed` headings. This gives future sessions quick context on what's been done without re-reading every file.
+
 ## Quick Reference
 
 ```
