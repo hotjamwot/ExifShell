@@ -123,6 +123,71 @@ struct PreviewPanel: View {
                                 )
                         }
 
+                        // --- Extension Mismatch Warning ---
+                        if file.hasMismatchedExtension {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundColor(.orange)
+                                    Text("Extension Mismatch")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundColor(.orange)
+                                }
+                                Text(file.mismatchDescription ?? "The file's actual content type doesn't match its filename suffix.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                HStack(spacing: 8) {
+                                    Button {
+                                        viewModel.fixExtensionsSelected()
+                                    } label: {
+                                        HStack(spacing: 4) {
+                                            if viewModel.isFixingExtensions {
+                                                ProgressView()
+                                                    .scaleEffect(0.6)
+                                                    .controlSize(.small)
+                                            }
+                                            Image(systemName: "arrow.triangle.2.circlepath")
+                                            Text(viewModel.selectedMismatchedCount > 0
+                                                 ? "Fix Selected (\(viewModel.selectedMismatchedCount))"
+                                                 : "Fix Extension")
+                                        }
+                                    }
+                                    .disabled(viewModel.isFixingExtensions || viewModel.selectedMismatchedCount == 0)
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+
+                                    Button {
+                                        viewModel.fixExtensionsAll()
+                                    } label: {
+                                        HStack(spacing: 4) {
+                                            if viewModel.isFixingExtensions {
+                                                ProgressView()
+                                                    .scaleEffect(0.6)
+                                                    .controlSize(.small)
+                                            }
+                                            Image(systemName: "arrow.triangle.2.circlepath")
+                                            Text(viewModel.mismatchedCount > 0
+                                                 ? "Fix All (\(viewModel.mismatchedCount))"
+                                                 : "Fix All")
+                                        }
+                                    }
+                                    .disabled(viewModel.isFixingExtensions || viewModel.mismatchedCount == 0)
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+                                }
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.orange.opacity(0.08))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                            )
+                        }
+
                         // --- Editable Fields ---
                         VStack(alignment: .leading, spacing: 16) {
                             fieldDiffRow(
@@ -138,7 +203,8 @@ struct PreviewPanel: View {
                                 label: "Description",
                                 original: file.originalDescription,
                                 current: file.description,
-                                isDirty: file.isDirty && file.description != file.originalDescription
+                                isDirty: file.isDirty && file.description != file.originalDescription,
+                                sourceLabel: file.descriptionSourceLabel
                             )
                         }
 
@@ -178,6 +244,10 @@ struct PreviewPanel: View {
 
                             if let v = file.readOnly.captionAbstract, !v.isEmpty {
                                 metadataRow(label: "Caption Abstract", value: v)
+                            }
+
+                            if let v = file.readOnly.xmpDescription, !v.isEmpty {
+                                metadataRow(label: "XMP Description", value: v)
                             }
 
                             if let v = file.readOnly.subject, !v.isEmpty {

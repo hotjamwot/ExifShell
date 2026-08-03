@@ -144,6 +144,8 @@ class FileListViewModel {
     var isSaving = false
     /// Whether rename is currently running.
     var isRenaming = false
+    /// Whether an extension-fix operation is currently running.
+    var isFixingExtensions = false
     var lastSaveFeedback: SaveFeedback?
     var lastDescriptionSaveFeedback: SaveFeedback?
     /// Stores the full error output from the last failed operation (ExifTool stderr/stdout).
@@ -163,6 +165,14 @@ class FileListViewModel {
 
     /// Number of selected files with unsaved changes.
     var selectedDirtyCount: Int { selectedFiles.filter(\.isDirty).count }
+
+    /// Number of files whose actual content type (detected by ExifTool)
+    /// doesn't match their filename suffix (e.g. a JPEG with a `.heic` suffix).
+    var mismatchedCount: Int { files.filter(\.hasMismatchedExtension).count }
+
+    /// Number of selected files whose actual content type doesn't match
+    /// their filename suffix.
+    var selectedMismatchedCount: Int { selectedFiles.filter(\.hasMismatchedExtension).count }
 
     /// The bulk-edit date value being typed (shown in the DateTimeOriginal toolbar when multiple files are selected).
     var bulkEditValue: String = ""
@@ -323,13 +333,22 @@ class FileListViewModel {
         for file in files {
             if let m = metadata[file.url] {
                 file.dateTimeOriginal = m.dateTimeOriginal ?? ""
-                file.description = m.description ?? ""
+                // For HEIC/HEIF files, the description lives in XMP-dc:Description
+                // rather than the EXIF Description tag. Fall back to it when
+                // the standard Description tag is empty. NOTE: the Description
+                // shortcut in ExifTool can resolve to an empty EXIF:ImageDescription
+                // (returned as "", not nil) for HEIC files with an EXIF block,
+                // so we must check `.isEmpty` rather than relying on nil coalescing.
+                file.description = (m.description?.isEmpty == false)
+                    ? m.description!
+                    : (m.xmpDescription ?? "")
 
                 var readOnly = ReadOnlyMetadata()
                 readOnly.createDate = m.createDate
                 readOnly.modifyDate = m.modifyDate
                 readOnly.imageDescription = m.imageDescription
                 readOnly.captionAbstract = m.captionAbstract
+                readOnly.xmpDescription = m.xmpDescription
                 readOnly.subject = m.subject
                 readOnly.keywords = m.keywords
                 readOnly.lastKeywordXMP = m.lastKeywordXMP
@@ -341,6 +360,8 @@ class FileListViewModel {
                 readOnly.dateSource = m.dateSource
                 readOnly.cameraMake = m.cameraMake
                 readOnly.cameraModel = m.cameraModel
+                readOnly.actualFileType = m.fileType
+                readOnly.actualFileExtension = m.fileTypeExtension
                 file.readOnly = readOnly
             }
             file.markClean()

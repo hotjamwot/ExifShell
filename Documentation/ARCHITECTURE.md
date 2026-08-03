@@ -81,7 +81,9 @@ ExifShell/ExifShell/
 ├── Models/
 │   └── ImageFile.swift         # @Observable class per image with dirty tracking for date & description
 ├── ViewModels/
-│   └── FileListViewModel.swift # @Observable class: state, import (batch full read), save, bulk edit, clear
+│   ├── FileListViewModel.swift # @Observable class: state, import (batch full read), save, bulk edit, clear
+│   ├── FileListViewModel+Rename.swift  # Rename extension: pre-sorted tag passes, FileManager-based rename for unwritable formats
+│   └── FileListViewModel+ExtensionFix.swift  # Extension-fix: rename files whose suffix doesn't match actual content type
 ├── Services/
 │   ├── ExifToolService.swift   # Core shell wrapper: read/write/sanitise, shared process runners, JSON decoders
 │   └── ExifToolService+Rename.swift  # Rename extension: pre-sorted tag passes, FileManager-based rename for unwritable formats
@@ -160,7 +162,7 @@ ExifShell/ExifShell/
 - All drag-and-drop handling is at the `ContentView` level so it works in all states.
 
 ### QuickStatsBar & StatusBarView
-- **QuickStatsBar**: A compact capsule pill showing total file count, image count (📷), video count (🎬), and an animated orange dirty count pill. The dirty pill springs in/out as counts change and uses `.contentTransition(.numericText())` for smooth number animations.
+- **QuickStatsBar**: A compact capsule pill showing total file count, image count (📷), video count (🎬), an animated orange dirty count pill, and an orange "N mismatch" pill when files with mismatched extensions are loaded. The dirty/mismatch pills spring in/out as counts change and use `.contentTransition(.numericText())` for smooth number animations.
 - **StatusBarView**: The status bar at the bottom of the left pane. Wraps QuickStatsBar + operation/status messages + error copy button + progress indicator (determinate or indeterminate). Extracted from ContentView into its own view to reduce SwiftUI view-body complexity for the Swift type-checker.
 
 ### FileTableView
@@ -170,6 +172,7 @@ ExifShell/ExifShell/
 - **Sortable headers:** Filename, DateTimeOriginal, Description, and Camera columns are clickable with native sort indicator arrows. Sort state syncs to `viewModel.sortKey` / `viewModel.sortAscending`.
 - **Orange text:** Editable cells use `.textColor = dirty ? .orange : .labelColor` to visually indicate unsaved changes.
 - **Four columns:** Filename (read-only) | DateTimeOriginal (editable) | Description (editable) | Camera (read-only, model name with Make+Model tooltip).
+- **Extension mismatch indicator:** A ⚠️ icon appears at the trailing edge of the Filename column when a file's actual content type (detected by ExifTool) doesn't match its filename suffix (e.g. JPEG with `.heic` suffix). Tooltip explains the mismatch.
 - **Hover highlight:** Uses a custom `HoverableTableRowView` (NSTableRowView subclass) with NSTrackingArea to draw a subtle background highlight on mouse hover (non-selected rows only).
 - Selection syncs to both `viewModel.selectedFile` (preview) and `viewModel.selectedFiles` (bulk edit).
 - Cells are dequeued/recycled using `NSTableView.makeView(withIdentifier:owner:)` for performance.
@@ -177,6 +180,7 @@ ExifShell/ExifShell/
 ### PreviewPanel
 - Wrapped in `ScrollView` to accommodate all metadata.
 - Shows thumbnail (loaded via `NSImage(contentsOf:)`).
+- **Extension Mismatch banner:** When the selected file's actual content type doesn't match its filename suffix, an orange banner appears above the editable fields with a description and "Fix Selected" / "Fix All" buttons.
 - **Editable Fields section:**
   - DateTimeOriginal diff view when dirty (grey strikethrough → green bold). When a `dateSource` is available, an orange source badge is shown next to the label: "EXIF" for embedded dates, "CreateDate" for CreateDate fallback, or "File System" for filesystem dates.
   - Description diff view when dirty (grey strikethrough → green bold).

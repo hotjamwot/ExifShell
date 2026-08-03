@@ -240,9 +240,17 @@ extension FileTableNSView {
             switch columnID {
 
             case "filename":
-                let cell = dequeueTextCell(tableView: tableView, id: cellID, text: file.filename)
+                let cell = dequeueTextCell(
+                    tableView: tableView,
+                    id: cellID,
+                    text: file.filename,
+                    warningText: file.hasMismatchedExtension ? "⚠️" : nil,
+                    warningToolTip: file.mismatchDescription
+                )
                 cell.textField?.lineBreakMode = .byTruncatingMiddle
-                cell.textField?.toolTip = file.filename
+                cell.textField?.toolTip = file.hasMismatchedExtension
+                    ? "\(file.mismatchDescription ?? "Extension mismatch") — click Fix Extension in the preview to correct"
+                    : file.filename
                 return cell
 
             case "camera":
@@ -374,31 +382,59 @@ extension FileTableNSView {
 
         /// Dequeues or creates a read-only text cell for the given column identifier.
         /// Uses `tableView.makeView(withIdentifier:owner:)` so views are recycled.
+        ///
+        /// When `warningText` is non-nil, a warning label (e.g. "⚠️") is shown
+        /// at the trailing edge of the cell to indicate a mismatched extension.
+        /// When nil, any existing warning label is removed (for cell reuse).
         private func dequeueTextCell(tableView: NSTableView,
                                       id: NSUserInterfaceItemIdentifier,
-                                      text: String) -> NSTableCellView
+                                      text: String,
+                                      warningText: String? = nil,
+                                      warningToolTip: String? = nil) -> NSTableCellView
         {
+            let cell: NSTableCellView
             if let existing = tableView.makeView(withIdentifier: id, owner: self) as? NSTableCellView {
-                existing.textField?.stringValue = text
-                return existing
+                cell = existing
+                cell.textField?.stringValue = text
+            } else {
+                let newCell = NSTableCellView()
+                newCell.identifier = id
+
+                let tf = NSTextField(labelWithString: text)
+                tf.translatesAutoresizingMaskIntoConstraints = false
+                tf.font = .systemFont(ofSize: NSFont.systemFontSize)
+                tf.lineBreakMode = .byTruncatingMiddle
+
+                newCell.addSubview(tf)
+                newCell.textField = tf
+
+                NSLayoutConstraint.activate([
+                    tf.leadingAnchor.constraint(equalTo: newCell.leadingAnchor, constant: 8),
+                    tf.trailingAnchor.constraint(equalTo: newCell.trailingAnchor, constant: -4),
+                    tf.centerYAnchor.constraint(equalTo: newCell.centerYAnchor),
+                ])
+                cell = newCell
             }
 
-            let cell = NSTableCellView()
-            cell.identifier = id
+            // Manage the warning label for extension mismatches.
+            // Remove any existing warning label first (for cell reuse).
+            let existingWarnings = cell.subviews.filter { $0 is NSTextField && $0 !== cell.textField }
+            existingWarnings.forEach { $0.removeFromSuperview() }
 
-            let tf = NSTextField(labelWithString: text)
-            tf.translatesAutoresizingMaskIntoConstraints = false
-            tf.font = .systemFont(ofSize: NSFont.systemFontSize)
-            tf.lineBreakMode = .byTruncatingMiddle
+            if let warningText, let tf = cell.textField {
+                let warningLabel = NSTextField(labelWithString: warningText)
+                warningLabel.translatesAutoresizingMaskIntoConstraints = false
+                warningLabel.font = .systemFont(ofSize: NSFont.systemFontSize)
+                warningLabel.toolTip = warningToolTip
+                cell.addSubview(warningLabel)
+                NSLayoutConstraint.activate([
+                    warningLabel.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                    warningLabel.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                ])
+                // Constrain the text field to not overlap the warning label
+                tf.trailingAnchor.constraint(lessThanOrEqualTo: warningLabel.leadingAnchor, constant: -4).isActive = true
+            }
 
-            cell.addSubview(tf)
-            cell.textField = tf
-
-            NSLayoutConstraint.activate([
-                tf.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
-                tf.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
-                tf.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            ])
             return cell
         }
 

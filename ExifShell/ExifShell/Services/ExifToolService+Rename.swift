@@ -184,7 +184,13 @@ extension ExifToolService {
     ///     so e.g. 2 passes gives calls at ~0.25 and ~0.75.
     private static func renameWritableFiles(_ inputs: [RenameInput],
                                              progressHandler: ((Double, String) -> Void)? = nil) -> RenameResult {
+        // Regular images use the Description shortcut (resolves to EXIF/IPTC/XMP).
+        // HEIC/HEIF files must use XMP-dc:Description explicitly because the
+        // Description shortcut can resolve to an empty EXIF:ImageDescription
+        // when the HEIC has an EXIF block, producing files without the description
+        // in the renamed filename.
         let descriptionExpr = #"${Description;if($_){s/'\''//g;s/[^\p{L}\p{N}]+/_/g;s/^_+|_+$//g;$_="_".$_}}"#
+        let xmpDescriptionExpr = #"${XMP-dc:Description;if($_){s/'\''//g;s/[^\p{L}\p{N}]+/_/g;s/^_+|_+$//g;$_="_".$_}}"#
         let dateFmt = ["-d", "%Y_%m_%d_%H%M"]
 
         // Step 1: Detect which tag category each file falls into, so we only
@@ -207,50 +213,99 @@ extension ExifToolService {
         for (category, tag, label) in passConfig {
             guard let categoryInputs = categories[category], !categoryInputs.isEmpty else { continue }
 
-            passIndex += 1
-            let expr = #"-FileName<${"# + tag + #"}_%03.c"# + descriptionExpr + #".%e"#
-            let fileArgs = categoryInputs.map(\.url.path)
+            // Split HEIC/HEIF out of the category — they need XMP-dc:Description
+            // instead of the ambiguous Description shortcut.
+            let heicCategoryInputs = categoryInputs.filter { isHEIC($0.url) }
+            let regularCategoryInputs = categoryInputs.filter { !isHEIC($0.url) }
 
-            progressHandler?(
-                Double(passIndex - 1) / Double(max(totalActivePasses, 1)),
-                "Renaming pass \(passIndex)/\(totalActivePasses) (\(label))..."
-            )
-
-            let passResult = runWriteTool(with: ["-v", "-m", expr] + dateFmt + fileArgs)
-            let passRenamed = Self.parseRenamedPaths(from: passResult.output)
-
-            // Validate: every claimed new path must actually exist on disk.
-            // Remove mappings where the target file doesn't exist (regex false positive).
-            var validatedMapping: [String: String] = [:]
-            for (oldPath, newPath) in passRenamed {
-                if FileManager.default.fileExists(atPath: newPath) {
-                    validatedMapping[oldPath] = newPath
-                }
+            // Run the pass for regular files (if any) using the Description shortcut.
+            if !regularCategoryInputs.isEmpty {
+                passIndex += 1
+                let expr = #"-FileName<${"# + tag + #"}_%03.c"# + descriptionExpr + #".%e"#
+                let passResult = Self.runRenamePass(
+                    expr: expr,
+                    dateFmt: dateFmt,
+                    inputs: regularCategoryInputs,
+                    label: label,
+                    passIndex: passIndex,
+                    totalPasses: totalActivePasses,
+                    progressHandler: progressHandler
+                )
+                for (k, v) in passResult.validatedMapping { pathMapping[k] = v }
+                if !passResult.output.isEmpty { allOutputs.append(passResult.output) }
+                if !passResult.success { allSucceeded = false }
             }
 
-            // For files in this category whose old path is not in the validated
-            // mapping (regex failed or path was invalid), compute the expected
-            // new filename in Swift and check if it exists on disk.
-            var compiledMapping = validatedMapping
-            for input in categoryInputs {
-                guard !compiledMapping.keys.contains(input.url.path) else { continue }
-                // If the old path still exists, the file was not renamed — skip it
-                guard !FileManager.default.fileExists(atPath: input.url.path) else { continue }
-
-                if let expectedURL = computeExpectedRenameURL(for: input, tag: tag) {
-                    if FileManager.default.fileExists(atPath: expectedURL.path) {
-                        compiledMapping[input.url.path] = expectedURL.path
-                    }
-                }
+            // Run the pass for HEIC files (if any) using XMP-dc:Description.
+            if !heicCategoryInputs.isEmpty {
+                passIndex += 1
+                let expr = #"-FileName<${"# + tag + #"}_%03.c"# + xmpDescriptionExpr + #".%e"#
+                let passResult = Self.runRenamePass(
+                    expr: expr,
+                    dateFmt: dateFmt,
+                    inputs: heicCategoryInputs,
+                    label: "\(label) (HEIC)",
+                    passIndex: passIndex,
+                    totalPasses: totalActivePasses,
+                    progressHandler: progressHandler
+                )
+                for (k, v) in passResult.validatedMapping { pathMapping[k] = v }
+                if !passResult.output.isEmpty { allOutputs.append(passResult.output) }
+                if !passResult.success { allSucceeded = false }
             }
-
-            for (k, v) in compiledMapping { pathMapping[k] = v }
-            if !passResult.output.isEmpty { allOutputs.append(passResult.output) }
-            if !passResult.success { allSucceeded = false }
         }
 
         let combinedOutput = allOutputs.joined(separator: "\n")
         return RenameResult(success: allSucceeded, output: combinedOutput, pathMapping: pathMapping)
+    }
+
+    /// Runs a single rename pass for a group of files sharing the same expression.
+    /// Validates the parsed path mapping against the filesystem and computes
+    /// Swift-side fallback mappings when regex parsing misses a rename.
+    private static func runRenamePass(
+        expr: String,
+        dateFmt: [String],
+        inputs: [RenameInput],
+        label: String,
+        passIndex: Int,
+        totalPasses: Int,
+        progressHandler: ((Double, String) -> Void)?
+    ) -> (validatedMapping: [String: String], output: String, success: Bool) {
+        let fileArgs = inputs.map(\.url.path)
+
+        progressHandler?(
+            Double(passIndex - 1) / Double(max(totalPasses, 1)),
+            "Renaming pass \(passIndex)/\(totalPasses) (\(label))..."
+        )
+
+        let passResult = runWriteTool(with: ["-v", "-m", expr] + dateFmt + fileArgs)
+        let passRenamed = Self.parseRenamedPaths(from: passResult.output)
+
+        // Validate: every claimed new path must actually exist on disk.
+        // Remove mappings where the target file doesn't exist (regex false positive).
+        var validatedMapping: [String: String] = [:]
+        for (oldPath, newPath) in passRenamed {
+            if FileManager.default.fileExists(atPath: newPath) {
+                validatedMapping[oldPath] = newPath
+            }
+        }
+
+        // For files in this group whose old path is not in the validated
+        // mapping (regex failed or path was invalid), compute the expected
+        // new filename in Swift and check if it exists on disk.
+        for input in inputs {
+            guard !validatedMapping.keys.contains(input.url.path) else { continue }
+            // If the old path still exists, the file was not renamed — skip it
+            guard !FileManager.default.fileExists(atPath: input.url.path) else { continue }
+
+            if let expectedURL = computeExpectedRenameURL(for: input, tag: "") {
+                if FileManager.default.fileExists(atPath: expectedURL.path) {
+                    validatedMapping[input.url.path] = expectedURL.path
+                }
+            }
+        }
+
+        return (validatedMapping, passResult.output, passResult.success)
     }
 
     /// Computes the expected rename destination URL for a file by using the

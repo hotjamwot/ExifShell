@@ -32,6 +32,18 @@ extension ExifToolService {
         "mp4", "mov", "m4v"
     ]
 
+    /// HEIC/HEIF image extensions. These containers don't properly support
+    /// the EXIF `ImageDescription` tag — descriptions must be written to the
+    /// XMP namespace via `-XMP-dc:Description=` instead.
+    private static let heicExtensions: Set<String> = [
+        "heic", "heif"
+    ]
+
+    /// Returns true if the file extension is HEIC/HEIF.
+    static func isHEIC(_ url: URL) -> Bool {
+        heicExtensions.contains(url.pathExtension.lowercased())
+    }
+
     /// Video extensions that ExifTool cannot write to (RIFF/AVI, MPEG container limitations).
     /// These files can be read but not modified by ExifTool.
     private static let unwritableVideoExtensions: Set<String> = [

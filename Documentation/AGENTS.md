@@ -16,7 +16,8 @@ File                             → depends on                     → used by
 ├── ViewModels/
 │   ├── FileListViewModel.swift  → ImageFile, ExifToolService     → ContentView, FileTableView, PreviewPanel
 │   ├── FileListViewModel+Save.swift → FileListViewModel           → (extension, no direct consumer)
-│   └── FileListViewModel+Rename.swift → FileListViewModel         → (extension, no direct consumer)
+│   ├── FileListViewModel+Rename.swift → FileListViewModel         → (extension, no direct consumer)
+│   └── FileListViewModel+ExtensionFix.swift → FileListViewModel   → (extension, no direct consumer)
 ├── Services/
 │   ├── ExifToolService.swift    → (none — static enum)           → FileListViewModel, ImageFile(Rename)
 │   ├── ExifToolService+Extensions.swift → ExifToolService        → (extension)
@@ -55,6 +56,7 @@ For images, `DateTimeOriginal` maps to `EXIF:DateTimeOriginal`; for QuickTime vi
 | `ExifShell/ExifShell/ViewModels/FileListViewModel.swift` | `@Observable` class: all state (`files[]`, `selectedFile`, `selectedFiles[]`, `bulkEditValue`, `bulkEditDescriptionValue`), import (batch full metadata read), select, save (saves date + description independently, handles image/video tag differences), clear, bulk edit (date & description with separate text fields), sanitise (with Phase 1 pre-write for filesystem-date files), rename. |
 | `ExifShell/ExifShell/ViewModels/FileListViewModel+Save.swift` | Extension on `FileListViewModel` containing all save-related logic: `saveAll()`, `saveSelected()`, `saveAllAsync()`, `SaveFeedback`, `SaveGroupResult`, `markFilesClean()`. |
 | `ExifShell/ExifShell/ViewModels/FileListViewModel+Rename.swift` | Extension on `FileListViewModel` containing all rename-related logic: `renameAll()`, `renameSelected()`, `renameAllAsync()`. |
+| `ExifShell/ExifShell/ViewModels/FileListViewModel+ExtensionFix.swift` | Extension on `FileListViewModel` containing logic to fix files whose actual content type (detected by ExifTool) doesn't match their filename suffix (e.g. JPEG with `.heic` suffix). `fixExtensionsAll()`, `fixExtensionsSelected()`, `fixExtensionsAsync()`. |
 | `ExifShell/ExifShell/Services/ExifToolService.swift` | Core shell wrapper: static methods for read/write/sanitise operations. All Process boilerplate centralised into `runReadTool` / `runWriteTool` helpers. Also contains shared infrastructure (`ReadResult`, `WriteResult`, `decoder`, `missingToolError`). |
 | `ExifShell/ExifShell/Services/ExifToolService+Extensions.swift` | Extension on `ExifToolService` with media type helpers: `videoExtensions`, `quickTimeExtensions`, `unwritableVideoExtensions`, `splitByMediaType()`, `isUnwritableVideo()`, plus error parsing. |
 | `ExifShell/ExifShell/Services/ExifToolService+ReadWrite.swift` | Extension on `ExifToolService` containing all read/write/sanitise operations: `readAllMetadata()` (batch full reads returning `[URL: FileMetadata]` with `DateSource` tracking), `readDateTimeOriginal()` (single/batch), `writeDateTimeOriginal()` (batch, splits images/videos by extension), `writeDescription()` (batch, videos get `-Description=` only), `writeQuickTimeCreationDate()` (sanitise pre-write), `sanitise()` (image-specific or video-specific pipelines). Also contains JSON decoding types: `FileMetadata`, `DateSource`, `DateTimeFallbackOutput`, `FullExifToolOutput` (with auto-synthesised `Core` + property wrappers for flexible fields). |
@@ -153,7 +155,7 @@ static func writeDescription(_ value: String, to urls: [URL]) -> WriteResult {
 
 | Operation | Command |
 |---|---|
-| Read (full batch) | `exiftool -json -DateTimeOriginal -QuickTime:CreationDate -CreateDate -ModifyDate -FileModifyDate -Description -ImageDescription -Caption-Abstract -Subject -Keywords -LastKeywordXMP -Duration -ImageWidth -ImageHeight -Make -Model <files...>` |
+| Read (full batch) | `exiftool -json -DateTimeOriginal -QuickTime:CreationDate -CreateDate -ModifyDate -FileModifyDate -Description -ImageDescription -Caption-Abstract -Subject -Keywords -LastKeywordXMP -Duration -ImageWidth -ImageHeight -Make -Model -FileType -FileTypeExtension <files...>` |
 | Read (date only) | `exiftool -json -DateTimeOriginal <files...>` |
 | Write (date batch, images) | `exiftool -overwrite_original -EXIF:DateTimeOriginal="<value>" -CreateDate="<value>" -ModifyDate="<value>" -OffsetTime= -OffsetTimeOriginal= -OffsetTimeDigitized= <files...>` |
 | Write (date batch, QuickTime videos) | `exiftool -overwrite_original -QuickTime:CreationDate="<value>" -CreateDate="<value>" -ModifyDate="<value>" -MediaCreateDate="<value>" -MediaModifyDate="<value>" -TrackCreateDate="<value>" -TrackModifyDate="<value>" -DateTimeOriginal="<value>" <files...>` |
@@ -188,7 +190,7 @@ The static property `exifToolPath` is resolved once at startup by checking:
 This is intentionally more robust than a simple `which exiftool` probe because Xcode can launch the app without the same shell PATH you have in Terminal. If not found, `missingToolError` returns a descriptive message and all read/write operations return nil/failure.
 
 ### Full Metadata Batch Read
-`ExifToolService.readAllMetadata(from:)` processes all files in a single process invocation, reading 17 tags via the `readAllTags` static let (including `FileModifyDate` for the filesystem fallback, plus `Make`/`Model` for camera metadata). Returns `FileMetadata` with a `dateSource: DateSource?` field indicating which tag provided the `dateTimeOriginal` value (`.dateTimeOriginal`, `.createDate`, or `.fileModifyDate`). Includes video-specific fields: Duration, ImageWidth, ImageHeight, and camera fields: cameraMake, cameraModel.
+`ExifToolService.readAllMetadata(from:)` processes all files in a single process invocation, reading 19 tags via the `readAllTags` static let (including `FileModifyDate` for the filesystem fallback, `Make`/`Model` for camera metadata, and `FileType`/`FileTypeExtension` for extension-mismatch detection). Returns `FileMetadata` with a `dateSource: DateSource?` field indicating which tag provided the `dateTimeOriginal` value (`.dateTimeOriginal`, `.createDate`, or `.fileModifyDate`). Includes video-specific fields: Duration, ImageWidth, ImageHeight, camera fields: cameraMake, cameraModel, and file-type fields: fileType, fileTypeExtension.
 
 ### ReadOnlyMetadata Struct
 Read-only fields are grouped into `ReadOnlyMetadata` struct in `ImageFile.swift`:
@@ -203,6 +205,17 @@ The file table uses a cached `sortedFiles` property in the ViewModel. Bulk edit 
 ### Camera Metadata
 Camera Make and Model are read-only fields read from ExifTool's `-Make` and `-Model` tags during the full metadata batch read. They are stored in `ImageFile.readOnly.cameraMake` and `ImageFile.readOnly.cameraModel`. In the table, the "Camera" column displays the camera model name (most identifiable), with the full `Make Model` shown in a tooltip. The preview panel shows both fields as separate read-only rows with SF icons (`camera` and `camera.viewfinder`). A `.camera` sort key sorts files by model name alphabetically.
 
+### Extension Mismatch Detection
+ExifShell detects files whose actual content type (detected by ExifTool) doesn't match their filename suffix. Common case: HEIC files that are actually JPEGs — the filename ends in `.heic` but ExifTool reports `FileType: JPEG` / `FileTypeExtension: jpg`.
+
+- **Detection**: `readAllMetadata()` reads `-FileType` and `-FileTypeExtension` tags. These are stored in `ImageFile.readOnly.actualFileType` and `ImageFile.readOnly.actualFileExtension`.
+- **Model**: `ImageFile.hasMismatchedExtension` compares the current URL extension against the actual file type extension. `ImageFile.correctExtension` returns the correct suffix. `ImageFile.mismatchDescription` provides a human-readable explanation.
+- **Visual indicators**:
+  - **File table**: A ⚠️ icon appears at the trailing edge of the Filename column for mismatched files, with a tooltip explaining the mismatch.
+  - **Preview panel**: An orange "Extension Mismatch" banner appears above the editable fields, showing the mismatch description and "Fix Selected" / "Fix All" buttons.
+  - **Status bar**: An orange "N mismatch" pill appears in the QuickStatsBar when mismatched files are loaded.
+- **Fix operation**: `FileListViewModel.fixExtensionsAll()` / `fixExtensionsSelected()` rename files on disk via `FileManager.moveItem()`, changing only the extension (e.g. `photo.heic` → `photo.jpg`). The file content is unchanged. Progress is shown with determinate progress in the status bar.
+
 ### Media Type Detection
 Media type is determined from file extension:
 - `FileListViewModel.mediaType(for:)` returns `.image` or `.video`
@@ -212,7 +225,7 @@ Media type is determined from file extension:
 
 ### FullExifToolOutput Decoder Architecture
 `FullExifToolOutput` uses a two-part decoding strategy:
-- **`Core` struct**: Auto-synthesised `Decodable` for simple string fields (11 fields: sourceFile, dates, description, camera)
+- **`Core` struct**: Auto-synthesised `Decodable` for simple string fields (15 fields: sourceFile, dates, description, camera, fileType, fileTypeExtension)
 - **Flexible property wrappers**: `@FlexibleStringArray` (String-or-[String]), `@FlexibleDuration` (String-or-Double seconds), `@FlexibleString` (String-or-Int)
 - Missing optional fields are decoded with `decodeIfPresent` so a file that lacks `Subject`, `Keywords`, `Duration`, `ImageWidth`, or `ImageHeight` does not cause the whole batch read to fail
 - This eliminates ~50 lines of manual decoding boilerplate while staying resilient to ExifTool output variations
@@ -234,7 +247,7 @@ Media type is determined from file extension:
   - **Images**: Normalises DateTimeOriginal format via `DateFmt("%Y:%m:%d %H:%M:%S")`, propagates to CreateDate/ModifyDate, clears OffsetTime* tags, syncs Description to ImageDescription/Caption-Abstract
   - **QuickTime Videos**: Normalises QuickTime:CreationDate via `DateFmt`, propagates to CreateDate/ModifyDate, syncs Description (no offset tags)
   - **Other Videos (MKV, WebM, AVI, etc.)**: Normalises DateTimeOriginal via `DateFmt`, propagates to CreateDate/ModifyDate, syncs Description
-- `FileListViewModel.sanitiseSelected()` operates on the **currently selected files** (from `selectedFiles`). It first saves any dirty files, then runs a **Phase 1 pre-write** for files whose `dateSource == .fileModifyDate` — these have no embedded date tag on disk, so the main sanitise pipeline would silently do nothing. Each file's own in-memory dateTimeOriginal is written (timezone stripped via `ExifToolService.stripTimezone()`) to the appropriate tag (QuickTime:CreationDate for QuickTime videos, DateTimeOriginal for other videos/images), grouped by stripped value for batching. Then the main pipeline processes files in **batches of 80** with live determinate progress (`"Sanitising (X/Y)..."`), skips unwritable formats (AVI, MPEG) with a warning, then re-reads all metadata from disk to refresh the display.
+- `FileListViewModel.sanitiseSelected()` operates on the **currently selected files** (from `selectedFiles`). It first saves any dirty files, then runs a **Phase 1 pre-write** for files whose `dateSource == .fileModifyDate` — these have no embedded date tag on disk, so the main sanitise pipeline would silently do nothing. Each file's own in-memory dateTimeOriginal is written (timezone stripped via `ExifToolService.stripTimezone()`) to the appropriate tag (QuickTime:CreationDate for QuickTime videos, DateTimeOriginal for other videos/images), grouped by stripped value for batching. Then the main pipeline processes files in **batches of 200** with live determinate progress (`"Sanitising (X/Y)..."`), skips unwritable formats (AVI, MPEG) with a warning, then re-reads all metadata from disk to refresh the display.
 - `FileListViewModel.sanitiseAll()` runs the same sanitise pipeline for all loaded files, not just selected files.
  - The "Sanitise Selected" button appears in the PreviewPanel alongside Save and Rename buttons, using the `wand.and.rays` SF Symbol.
  - **Note:** The `-Description<Description` self-copy has been removed from video sanitise commands — videos only have one `Description` tag, making the self-copy a no-op that could produce warnings in some containers.
@@ -246,7 +259,7 @@ Media type is determined from file extension:
 - **Pre-sort optimisation**: Instead of running 3 blind ExifTool passes (filtered by `-if`), `detectTagCategories()` runs a single ExifTool read to classify files by which date tag they have (`CreateDate`, `DateTimeOriginal`, or `FileModifyDate`). Then only the needed passes are dispatched — for a batch where every file has CreateDate (the common case), this means 1 ExifTool pass instead of 3.
 - **Each pass** runs: `exiftool -v -m "-FileName<${TAG}_%03.c{Description;...}.%e" -d %Y_%m_%d_%H%M <files...>` with the appropriate tag (`CreateDate`, `DateTimeOriginal`, or `FileModifyDate`).
 - **Path mapping**: ExifTool's `-v` output is parsed via the regex `'([^']+)'\s*-+>\s*'([^']+)'`. Each mapped new path is validated with `FileManager.default.fileExists(atPath:)` to discard false positives. For files where the regex missed a mapping (the old path no longer exists but wasn't captured), `computeExpectedRenameURL()` calculates the expected destination using in-memory metadata + a per-directory counter.
-- `FileListViewModel.renameAll()` first saves any dirty files, then processes files in **batches of 80** with live determinate progress (`"Renaming (X/Y)..."`), and updates the in-memory URL for each renamed file from the path mapping returned by ExifTool.
+- `FileListViewModel.renameAll()` first saves any dirty files, then processes files in **batches of 200** with live determinate progress (`"Renaming (X/Y)..."`), and updates the in-memory URL for each renamed file from the path mapping returned by ExifTool.
 
 ### Video Thumbnails
 - `ImageFile.generateThumbnail(for:mediaType:)` extracts the first frame using `AVAssetImageGenerator` for videos.

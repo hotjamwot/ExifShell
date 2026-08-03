@@ -82,6 +82,30 @@ struct QuickStatsBar: View {
                 .transition(.scale.combined(with: .opacity))
                 .id(viewModel.dirtyCount) // force re-create for animation on change
             }
+
+            // Mismatched extension count pill (only shown when > 0)
+            if viewModel.mismatchedCount > 0 {
+                Text("·")
+                    .foregroundColor(.secondary.opacity(0.5))
+
+                HStack(spacing: 3) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 9))
+                    Text("\(viewModel.mismatchedCount) mismatch")
+                        .font(.system(.caption, design: .monospaced, weight: .medium))
+                        .contentTransition(.numericText())
+                }
+                .foregroundColor(.orange)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    Capsule()
+                        .fill(Color.orange.opacity(0.12))
+                )
+                .transition(.scale.combined(with: .opacity))
+                .id(viewModel.mismatchedCount) // force re-create for animation on change
+                .help("Files whose actual content type doesn't match their filename suffix")
+            }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
@@ -119,6 +143,7 @@ struct StatusBarView: View {
             || viewModel.isLoading
             || viewModel.isSaving
             || viewModel.isRenaming
+            || viewModel.isFixingExtensions
             || !viewModel.files.isEmpty
         {
             HStack(spacing: 8) {
@@ -161,7 +186,7 @@ struct StatusBarView: View {
                         .scaleEffect(0.7)
                         .controlSize(.small)
                         .frame(width: 120)
-                } else if viewModel.isLoading || viewModel.isSaving || viewModel.isRenaming {
+                } else if viewModel.isLoading || viewModel.isSaving || viewModel.isRenaming || viewModel.isFixingExtensions {
                     ProgressView()
                         .scaleEffect(0.7)
                         .controlSize(.small)

@@ -30,6 +30,9 @@ struct ReadOnlyMetadata {
     var modifyDate: String?
     var imageDescription: String?
     var captionAbstract: String?
+    /// The XMP Dublin Core description (e.g. `XMP-dc:Description`).
+    /// HEIC/HEIF files store descriptions here rather than in EXIF ImageDescription.
+    var xmpDescription: String?
     var subject: String?
     var keywords: String?
     var lastKeywordXMP: String?
@@ -53,6 +56,16 @@ struct ReadOnlyMetadata {
 
     /// Camera model (e.g. "iPhone 15 Pro", "X-T3", "DIGITAL IXUS v"). Read-only, populated from ExifTool.
     var cameraModel: String?
+
+    /// The actual file type detected by ExifTool (e.g. "JPEG", "HEIC", "PNG").
+    /// Read-only, populated from ExifTool's `-FileType` tag.
+    /// Used to detect files whose suffix doesn't match their real content type.
+    var actualFileType: String?
+
+    /// The correct file extension for the actual content type (e.g. "jpg").
+    /// Read-only, populated from ExifTool's `-FileTypeExtension` tag.
+    /// Used to detect suffix mismatches and suggest corrections.
+    var actualFileExtension: String?
 }
 
 // ============================================================================
@@ -127,6 +140,53 @@ final class ImageFile: Identifiable, Hashable {
         case .fileModifyDate:
             return "File System"
         }
+    }
+
+    /// The display label for the description source badge shown in the preview.
+    /// Indicates which tag the description value came from — XMP for HEIC/HEIF
+    /// files (XMP-dc:Description), EXIF for ImageDescription, or IPTC for
+    /// Caption-Abstract.
+    var descriptionSourceLabel: String? {
+        if let v = readOnly.xmpDescription, !v.isEmpty {
+            return "XMP"
+        }
+        if let v = readOnly.imageDescription, !v.isEmpty {
+            return "EXIF"
+        }
+        if let v = readOnly.captionAbstract, !v.isEmpty {
+            return "IPTC"
+        }
+        return nil
+    }
+
+    // MARK: - Extension Mismatch Detection
+
+    /// Returns true when the file's actual content type (detected by ExifTool)
+    /// has a different extension than the filename suffix.
+    ///
+    /// Common case: HEIC files that are actually JPEGs — the filename ends in
+    /// `.heic` but ExifTool reports `FileType: JPEG` / `FileTypeExtension: jpg`.
+    var hasMismatchedExtension: Bool {
+        guard let actualExt = readOnly.actualFileExtension?.lowercased(),
+              !actualExt.isEmpty else { return false }
+        let currentExt = url.pathExtension.lowercased()
+        return currentExt != actualExt
+    }
+
+    /// The correct extension for the file's actual content type, lowercased.
+    /// e.g. "jpg" for a JPEG file with a `.heic` suffix. nil when unknown.
+    var correctExtension: String? {
+        readOnly.actualFileExtension?.lowercased()
+    }
+
+    /// A human-readable description of the mismatch, e.g.
+    /// "This file is actually JPEG (.jpg), not .heic".
+    var mismatchDescription: String? {
+        guard hasMismatchedExtension else { return nil }
+        let actualType = readOnly.actualFileType ?? "unknown format"
+        let correctExt = correctExtension ?? "?"
+        let currentExt = url.pathExtension.lowercased()
+        return "This file is actually \(actualType) (.\(correctExt)), not .\(currentExt)."
     }
 
     // MARK: - Description (editable, master field)

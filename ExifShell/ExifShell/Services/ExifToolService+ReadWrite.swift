@@ -37,6 +37,9 @@ extension ExifToolService {
         let description: String?
         let imageDescription: String?
         let captionAbstract: String?
+        /// The XMP Dublin Core description (e.g. `XMP-dc:Description`).
+        /// HEIC/HEIF files store descriptions here rather than in EXIF ImageDescription.
+        let xmpDescription: String?
         let subject: String?
         let keywords: String?
         let lastKeywordXMP: String?
@@ -52,6 +55,12 @@ extension ExifToolService {
         let cameraMake: String?
         /// Camera model (e.g. "iPhone 15 Pro", "X-T3", "DIGITAL IXUS v").
         let cameraModel: String?
+        /// The actual file type detected by ExifTool (e.g. "JPEG", "HEIC", "PNG").
+        /// Used to detect files whose suffix doesn't match their real content type.
+        let fileType: String?
+        /// The correct file extension for the actual content type (e.g. "jpg").
+        /// Used to detect suffix mismatches and suggest corrections.
+        let fileTypeExtension: String?
     }
 
     /// Indicates which ExifTool tag provided the dateTimeOriginal value.
@@ -67,11 +76,12 @@ extension ExifToolService {
     static func emptyMetadata() -> FileMetadata {
         FileMetadata(
             dateTimeOriginal: nil, createDate: nil, modifyDate: nil,
-            description: nil, imageDescription: nil, captionAbstract: nil, subject: nil,
+            description: nil, imageDescription: nil, captionAbstract: nil, xmpDescription: nil, subject: nil,
             keywords: nil, lastKeywordXMP: nil,
             duration: nil, imageWidth: nil, imageHeight: nil,
             fileModifyDate: nil, dateSource: nil,
-            cameraMake: nil, cameraModel: nil
+            cameraMake: nil, cameraModel: nil,
+            fileType: nil, fileTypeExtension: nil
         )
     }
 
@@ -109,11 +119,14 @@ extension ExifToolService {
             let description: String?
             let imageDescription: String?
             let captionAbstract: String?
+            let xmpDescription: String?
             let quickTimeCreationDate: String?
             let cameraMake: String?
             let cameraModel: String?
             let quickTimeMake: String?
             let quickTimeModel: String?
+            let fileType: String?
+            let fileTypeExtension: String?
 
             enum CodingKeys: String, CodingKey {
                 case sourceFile = "SourceFile"
@@ -124,11 +137,14 @@ extension ExifToolService {
                 case description = "Description"
                 case imageDescription = "ImageDescription"
                 case captionAbstract = "Caption-Abstract"
+                case xmpDescription = "XMP-dc:Description"
                 case quickTimeCreationDate = "CreationDate"
                 case cameraMake = "Make"
                 case cameraModel = "Model"
                 case quickTimeMake = "QuickTime:Make"
                 case quickTimeModel = "QuickTime:Model"
+                case fileType = "FileType"
+                case fileTypeExtension = "FileTypeExtension"
             }
         }
 
@@ -309,6 +325,7 @@ extension ExifToolService {
         "-Description",
         "-ImageDescription",
         "-Caption-Abstract",
+        "-XMP-dc:Description",
         "-Subject",
         "-Keywords",
         "-LastKeywordXMP",
@@ -318,7 +335,9 @@ extension ExifToolService {
         "-Make",
         "-Model",
         "-QuickTime:Make",
-        "-QuickTime:Model"
+        "-QuickTime:Model",
+        "-FileType",
+        "-FileTypeExtension"
     ]
 
     /// Reads all supported metadata fields from multiple files in a **single** ExifTool invocation.
@@ -375,6 +394,7 @@ extension ExifToolService {
                 description: entry.core.description,
                 imageDescription: entry.core.imageDescription,
                 captionAbstract: entry.core.captionAbstract,
+                xmpDescription: entry.core.xmpDescription,
                 subject: entry.subject?.joined(separator: ", "),
                 keywords: entry.keywords?.joined(separator: ", "),
                 lastKeywordXMP: entry.lastKeywordXMP?.joined(separator: ", "),
@@ -384,7 +404,9 @@ extension ExifToolService {
                 fileModifyDate: entry.core.fileModifyDate,
                 dateSource: dateSource,
                 cameraMake: entry.core.cameraMake ?? entry.core.quickTimeMake,
-                cameraModel: entry.core.cameraModel ?? entry.core.quickTimeModel
+                cameraModel: entry.core.cameraModel ?? entry.core.quickTimeModel,
+                fileType: entry.core.fileType,
+                fileTypeExtension: entry.core.fileTypeExtension
             )
         }
         for url in urls {
@@ -519,7 +541,10 @@ extension ExifToolService {
     }
 
     /// Writes a description value to all description-related tags.
-    /// For images: Description, ImageDescription, Caption-Abstract.
+    /// For regular images: Description, ImageDescription, Caption-Abstract.
+    /// For HEIC/HEIF images: Description + XMP-dc:Description (HEIC containers
+    /// don't properly support the EXIF ImageDescription tag — the description
+    /// must be written to the XMP namespace instead).
     /// For videos: Description only (ImageDescription / Caption-Abstract
     /// are EXIF/IPTC tags and don't exist in QuickTime containers).
     ///
@@ -537,17 +562,40 @@ extension ExifToolService {
 
         let (imageURLs, quickTimeURLs, otherVideoURLs) = splitByMediaType(urls)
         let allVideoURLs = quickTimeURLs + otherVideoURLs
+
+        // Split HEIC/HEIF out of the image bucket — they need XMP-dc:Description
+        // instead of EXIF ImageDescription / IPTC Caption-Abstract.
+        let heicURLs = imageURLs.filter { isHEIC($0) }
+        let regularImageURLs = imageURLs.filter { !isHEIC($0) }
+
         var allSucceeded = true
         var outputs: [String] = []
 
-        if !imageURLs.isEmpty {
+        if !regularImageURLs.isEmpty {
             let args = [
                 "-overwrite_original",
                 "-m",
                 "-Description=\(value)",
                 "-ImageDescription=\(value)",
                 "-Caption-Abstract=\(value)"
-            ] + imageURLs.map(\.path)
+            ] + regularImageURLs.map(\.path)
+            let result = runWriteTool(with: args)
+            if !result.success { allSucceeded = false }
+            if !result.output.isEmpty { outputs.append(result.output) }
+        }
+
+        if !heicURLs.isEmpty {
+            // NOTE: We deliberately do NOT write `-Description=\(value)` here.
+            // The `Description` shortcut writes to ALL tags it maps to (including
+            // EXIF:ImageDescription if the HEIC has an EXIF block). This can
+            // create an empty/stale EXIF:ImageDescription that later shadows
+            // XMP-dc:Description when the shortcut is read back. Writing only
+            // the explicit XMP tag avoids this ambiguity entirely.
+            let args = [
+                "-overwrite_original",
+                "-m",
+                "-XMP-dc:Description=\(value)"
+            ] + heicURLs.map(\.path)
             let result = runWriteTool(with: args)
             if !result.success { allSucceeded = false }
             if !result.output.isEmpty { outputs.append(result.output) }
@@ -565,7 +613,7 @@ extension ExifToolService {
         }
 
         let combined = outputs.joined(separator: "\n")
-        let anyEmpty = imageURLs.isEmpty && allVideoURLs.isEmpty
+        let anyEmpty = regularImageURLs.isEmpty && heicURLs.isEmpty && allVideoURLs.isEmpty
         return WriteResult(success: allSucceeded || anyEmpty, output: combined)
     }
 
@@ -602,10 +650,16 @@ extension ExifToolService {
 
         let (imageURLs, quickTimeURLs, otherVideoURLs) = splitByMediaType(urls)
         let allVideoURLs = quickTimeURLs + otherVideoURLs
+
+        // Split HEIC/HEIF out of the image bucket — they need XMP-dc:Description
+        // instead of EXIF ImageDescription / IPTC Caption-Abstract.
+        let heicURLs = imageURLs.filter { isHEIC($0) }
+        let regularImageURLs = imageURLs.filter { !isHEIC($0) }
+
         var allSucceeded = true
         var outputs: [String] = []
 
-        if !imageURLs.isEmpty {
+        if !regularImageURLs.isEmpty {
             let args: [String] = [
                 "-overwrite_original",
                 "-m",
@@ -617,7 +671,32 @@ extension ExifToolService {
                 "-OffsetTimeDigitized=",
                 "-ImageDescription<Description",
                 "-Caption-Abstract<Description"
-            ] + imageURLs.map(\.path)
+            ] + regularImageURLs.map(\.path)
+            let result = runWriteTool(with: args)
+            if !result.success { allSucceeded = false }
+            if !result.output.isEmpty { outputs.append(result.output) }
+        }
+
+        if !heicURLs.isEmpty {
+            // NOTE: We deliberately do NOT sync Description → XMP-dc:Description here.
+            // The `Description` shortcut tag in ExifTool resolves differently
+            // depending on what other tags exist in the container. For HEIC files
+            // with an EXIF block present (e.g. empty ImageDescription), the shortcut
+            // resolves to EXIF:ImageDescription, NOT XMP-dc:Description — so
+            // `-XMP-dc:Description<Description` would copy an EMPTY value into
+            // XMP-dc:Description, wiping out the description just written by Save.
+            // The description only lives in one place for HEIC (XMP-dc:Description)
+            // so there is nothing to sync.
+            let args: [String] = [
+                "-overwrite_original",
+                "-m",
+                #"-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}"#,
+                "-CreateDate<DateTimeOriginal",
+                "-ModifyDate<DateTimeOriginal",
+                "-OffsetTime=",
+                "-OffsetTimeOriginal=",
+                "-OffsetTimeDigitized="
+            ] + heicURLs.map(\.path)
             let result = runWriteTool(with: args)
             if !result.success { allSucceeded = false }
             if !result.output.isEmpty { outputs.append(result.output) }
@@ -655,7 +734,7 @@ extension ExifToolService {
         }
 
         let combined = outputs.joined(separator: "\n")
-        let anyEmpty = imageURLs.isEmpty && allVideoURLs.isEmpty
+        let anyEmpty = regularImageURLs.isEmpty && heicURLs.isEmpty && allVideoURLs.isEmpty
         return WriteResult(success: allSucceeded || anyEmpty, output: combined)
     }
 }
