@@ -56,6 +56,8 @@ class FileListViewModel {
         case originalDateTime
         case description
         case camera
+        /// Sorts mismatched files to the top when ascending (or bottom when descending).
+        case mismatched
     }
 
     /// Current sort key (defaults to filename).
@@ -77,9 +79,45 @@ class FileListViewModel {
         didSet { _sortedFilesCache = [] }
     }
 
+    /// Cached quick stats used by `imageCount`, `videoCount`, `dirtyCount`,
+    /// and `mismatchedCount`. Rebuilt by `recomputeStats()` in
+    /// `_statsVersion.didSet` so the O(n) scan happens once per invalidation
+    /// rather than on every SwiftUI body evaluation.
+    private struct FileStats {
+        var imageCount = 0
+        var videoCount = 0
+        var dirtyCount = 0
+        var mismatchedCount = 0
+    }
+
+    private var _cachedStats = FileStats()
+    /// Incremented whenever file-level state changes that could affect quick stats.
+    /// `_statsVersion.didSet` eagerly recomputes the cached counts so getters are O(1).
+    private var _statsVersion = 0 {
+        didSet { recomputeStats() }
+    }
+
+    /// Single-pass recompute of all quick stats. Called only on invalidation,
+    /// not on every view evaluation.
+    private func recomputeStats() {
+        var stats = FileStats()
+        for file in files {
+            switch file.mediaType {
+            case .image: stats.imageCount += 1
+            case .video: stats.videoCount += 1
+            }
+            if file.isDirty { stats.dirtyCount += 1 }
+            if file.hasMismatchedExtension { stats.mismatchedCount += 1 }
+        }
+        _cachedStats = stats
+    }
+
     /// Marks the sort cache as stale so it will be rebuilt on the next read.
+    /// Also invalidates quick stats — all in-file mutation points that change
+    /// sort-relevant state also change stat-relevant state.
     func invalidateSort() {
         _sortVersion &+= 1
+        _statsVersion &+= 1
     }
 
     /// Toggle sorting for a given key: if the same key is tapped, flip order; otherwise set to ascending.
@@ -125,6 +163,13 @@ class FileListViewModel {
                     let ca = "\(a.readOnly.cameraModel ?? "")"  // Sort by model only (most identifiable)
                     let cb = "\(b.readOnly.cameraModel ?? "")"
                     cmp = ca.localizedCaseInsensitiveCompare(cb)
+                case .mismatched:
+                    // Sort mismatched files first (ascending) / last (descending).
+                    switch (a.hasMismatchedExtension, b.hasMismatchedExtension) {
+                    case (true, false): cmp = .orderedAscending
+                    case (false, true): cmp = .orderedDescending
+                    default: cmp = a.filename.localizedCaseInsensitiveCompare(b.filename)
+                    }
                 }
 
                 return sortAscending ? (cmp == .orderedAscending) : (cmp == .orderedDescending)
@@ -146,6 +191,21 @@ class FileListViewModel {
     var isRenaming = false
     /// Whether an extension-fix operation is currently running.
     var isFixingExtensions = false
+    /// Whether sanitise is currently running.
+    var isSanitising = false
+    /// Tracks the most recent extension fix rename pairs (oldURL → newURL)
+    /// so the user can undo a fix operation. Cleared when a new fix runs.
+    var lastExtensionFixUndo: [(oldURL: URL, newURL: URL)] = []
+
+    /// Returns true when an extension fix operation can be undone.
+    var canUndoExtensionFix: Bool {
+        !lastExtensionFixUndo.isEmpty
+    }
+
+    /// Controls the confirmation dialog shown before running "Fix All".
+    /// Set to `true` from the button action; the dialog calls
+    /// `fixExtensionsAll()` on confirm or resets to `false` on cancel.
+    var showFixAllConfirmation = false
     var lastSaveFeedback: SaveFeedback?
     var lastDescriptionSaveFeedback: SaveFeedback?
     /// Stores the full error output from the last failed operation (ExifTool stderr/stdout).
@@ -155,20 +215,32 @@ class FileListViewModel {
     // MARK: - Quick Stats
 
     /// Number of image files currently loaded.
-    var imageCount: Int { files.filter { $0.mediaType == .image }.count }
+    var imageCount: Int {
+        _ = _statsVersion
+        return _cachedStats.imageCount
+    }
 
     /// Number of video files currently loaded.
-    var videoCount: Int { files.filter { $0.mediaType == .video }.count }
+    var videoCount: Int {
+        _ = _statsVersion
+        return _cachedStats.videoCount
+    }
 
     /// Number of files with unsaved changes.
-    var dirtyCount: Int { files.filter(\.isDirty).count }
+    var dirtyCount: Int {
+        _ = _statsVersion
+        return _cachedStats.dirtyCount
+    }
 
     /// Number of selected files with unsaved changes.
     var selectedDirtyCount: Int { selectedFiles.filter(\.isDirty).count }
 
     /// Number of files whose actual content type (detected by ExifTool)
     /// doesn't match their filename suffix (e.g. a JPEG with a `.heic` suffix).
-    var mismatchedCount: Int { files.filter(\.hasMismatchedExtension).count }
+    var mismatchedCount: Int {
+        _ = _statsVersion
+        return _cachedStats.mismatchedCount
+    }
 
     /// Number of selected files whose actual content type doesn't match
     /// their filename suffix.
@@ -223,7 +295,7 @@ class FileListViewModel {
     // MARK: - Import
 
     func importFiles(_ urls: [URL]) {
-        let supportedURLs = urls.filter { isSupportedFile($0) }
+        let supportedURLs = urls.filter { ExifToolService.isSupportedFile($0) }
         guard !supportedURLs.isEmpty else {
             statusMessage = "No supported files found in drop."
             return
@@ -244,7 +316,7 @@ class FileListViewModel {
         let placeholders = newURLs.map { url in
             ImageFile(
                 url: url,
-                mediaType: Self.mediaType(for: url),
+                mediaType: ExifToolService.mediaType(for: url),
                 dateTimeOriginal: "",
                 description: ""
             )
@@ -290,7 +362,7 @@ class FileListViewModel {
         )
         var urls: [URL] = []
         while let fileURL = enumerator?.nextObject() as? URL {
-            if isSupportedFile(fileURL) { urls.append(fileURL) }
+            if ExifToolService.isSupportedFile(fileURL) { urls.append(fileURL) }
         }
         importFiles(urls)
     }
@@ -391,10 +463,7 @@ class FileListViewModel {
         files.removeAll()
         selectedFile = nil
         selectedFiles = []
-        lastSaveFeedback = nil
-        lastDescriptionSaveFeedback = nil
-        lastErrorDetail = nil
-        statusMessage = nil
+        clearFeedback()
         bulkEditValue = ""
         bulkEditDescriptionValue = ""
         // files.didSet handles invalidation
@@ -406,6 +475,18 @@ class FileListViewModel {
         selectedFile = file
     }
 
+    /// Selects all files whose actual content type doesn't match their filename suffix.
+    func selectAllMismatched() {
+        let mismatched = files.filter(\.hasMismatchedExtension)
+        selectedFiles = mismatched
+        selectedFile = mismatched.first
+        if mismatched.isEmpty {
+            statusMessage = "No mismatched files to select."
+        } else {
+            statusMessage = "Selected \(mismatched.count) mismatched file(s)."
+        }
+    }
+
     /// Clears transient save feedback when navigating away or re-selecting.
     func clearFeedback() {
         lastSaveFeedback = nil
@@ -414,6 +495,44 @@ class FileListViewModel {
         statusMessage = nil
         operationMessage = nil
         operationProgress = nil
+    }
+
+    /// Reverts the most recent extension-fix operation by renaming files
+    /// back from their corrected extension to their original suffix.
+    func undoExtensionFix() {
+        guard !lastExtensionFixUndo.isEmpty else { return }
+        guard !isFixingExtensions else { return }
+
+        isFixingExtensions = true
+        var undoneCount = 0
+
+        for pair in lastExtensionFixUndo {
+            // Only Undo moves back from an extension fix that hasn't been
+            // overwritten by another operation.
+            guard FileManager.default.fileExists(atPath: pair.newURL.path) else { continue }
+            do {
+                try FileManager.default.moveItem(at: pair.newURL, to: pair.oldURL)
+                // Update any loaded ImageFile that points at the new URL
+                if let idx = files.firstIndex(where: { $0.url == pair.newURL }) {
+                    files[idx].updateURL(pair.oldURL)
+                }
+                undoneCount += 1
+            } catch {
+                // One failed rename shouldn't abort the rest of the undo
+                continue
+            }
+        }
+
+        invalidateSort()
+
+        if undoneCount > 0 {
+            statusMessage = "↩️ Undid extension fix on \(undoneCount) file(s)."
+        } else {
+            statusMessage = "Nothing to undo — files may have been moved or renamed since the fix."
+        }
+
+        lastExtensionFixUndo = []
+        isFixingExtensions = false
     }
 
     func beginOperation(message: String, determinate: Bool = false) {
@@ -603,9 +722,6 @@ class FileListViewModel {
 
     // MARK: - Sanitise
 
-    /// Whether sanitise is currently running.
-    var isSanitising = false
-
     /// Sanitises the currently selected files by normalising date formats,
     /// propagating dates, clearing offset tags (images), and syncing descriptions.
     ///
@@ -771,30 +887,4 @@ class FileListViewModel {
         isSanitising = false
     }
 
-    // MARK: - File Type Detection
-
-    /// Image extensions supported by ExifShell. Video extensions are defined
-    /// in `ExifToolService.videoExtensions` (single source of truth).
-    private let imageExtensions: Set<String> = [
-        "jpg", "jpeg", "png", "tiff", "tif", "gif", "bmp", "heic", "heif",
-        "raw", "cr2", "cr3", "nef", "arw", "dng", "orf", "rw2", "sr2",
-        "webp", "ico", "psd"
-    ]
-
-    /// Returns the MediaType for a given URL based on its extension.
-    /// Uses ExifToolService.videoExtensions as the single source of truth.
-    static func mediaType(for url: URL) -> MediaType {
-        let ext = url.pathExtension.lowercased()
-        if ExifToolService.videoExtensions.contains(ext) {
-            return .video
-        }
-        return .image
-    }
-
-    /// Returns true if the file extension is a supported image or video type.
-    /// Video extensions reference ExifToolService.videoExtensions (single source of truth).
-    private func isSupportedFile(_ url: URL) -> Bool {
-        let ext = url.pathExtension.lowercased()
-        return imageExtensions.contains(ext) || ExifToolService.videoExtensions.contains(ext)
-    }
 }

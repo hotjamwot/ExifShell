@@ -25,6 +25,12 @@ extension FileListViewModel {
         Task { await fixExtensionsAsync(only: nil) }
     }
 
+    /// Shows the confirmation dialog before running "Fix All".
+    /// The dialog is bound to `showFixAllConfirmation` in the view layer.
+    func confirmFixExtensionsAll() {
+        showFixAllConfirmation = true
+    }
+
     /// Fixes the extension of the currently selected files whose actual
     /// content type doesn't match their filename suffix.
     func fixExtensionsSelected() {
@@ -50,6 +56,7 @@ extension FileListViewModel {
         guard !isFixingExtensions else { return }
 
         isFixingExtensions = true
+        lastExtensionFixUndo = []  // Clear any previous undo history
         beginOperation(message: "Fixing extensions for \(targets.count) file(s)...", determinate: true)
 
         var fixedCount = 0
@@ -79,7 +86,10 @@ extension FileListViewModel {
 
             do {
                 try FileManager.default.moveItem(at: file.url, to: newURL)
+                let oldURL = file.url
                 file.updateURL(newURL)
+                // Track the rename so the user can undo this fix later
+                lastExtensionFixUndo.append((oldURL: oldURL, newURL: newURL))
                 fixedCount += 1
             } catch {
                 failedCount += 1

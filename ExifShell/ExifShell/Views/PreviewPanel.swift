@@ -38,7 +38,7 @@ import SwiftUI
 // ============================================================================
 
 struct PreviewPanel: View {
-    let viewModel: FileListViewModel
+    @Bindable var viewModel: FileListViewModel
 
     /// Tracks whether the save icon should animate.
     @State private var isSaveAnimating = false
@@ -157,7 +157,7 @@ struct PreviewPanel: View {
                                     .controlSize(.small)
 
                                     Button {
-                                        viewModel.fixExtensionsAll()
+                                        viewModel.confirmFixExtensionsAll()
                                     } label: {
                                         HStack(spacing: 4) {
                                             if viewModel.isFixingExtensions {
@@ -174,6 +174,17 @@ struct PreviewPanel: View {
                                     .disabled(viewModel.isFixingExtensions || viewModel.mismatchedCount == 0)
                                     .buttonStyle(.borderedProminent)
                                     .controlSize(.small)
+
+                                    if viewModel.canUndoExtensionFix {
+                                        Button {
+                                            viewModel.undoExtensionFix()
+                                        } label: {
+                                            Label("Undo", systemImage: "arrow.uturn.backward")
+                                        }
+                                        .disabled(viewModel.isFixingExtensions)
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                    }
                                 }
                             }
                             .padding(10)
@@ -498,6 +509,16 @@ struct PreviewPanel: View {
             }
         }
         .frame(minWidth: 280)
+        .alert("Fix Extensions for All Files?", isPresented: $viewModel.showFixAllConfirmation) {
+            Button("Fix All (\(viewModel.mismatchedCount) files)", role: .destructive) {
+                viewModel.fixExtensionsAll()
+            }
+            Button("Cancel", role: .cancel) {
+                viewModel.showFixAllConfirmation = false
+            }
+        } message: {
+            Text("This will rename \(viewModel.mismatchedCount) file(s) to correct their extension suffix. The file contents are unchanged, and you can undo this afterwards.")
+        }
         .onChange(of: viewModel.isSaving) { oldVal, newVal in
             if newVal {
                 isSaveAnimating = true

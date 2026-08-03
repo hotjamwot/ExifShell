@@ -8,15 +8,26 @@ import Foundation
 // and error output parsing.
 //
 // Contains:
-//   - videoExtensions                    — shared set of known video extensions
-//   - isUnwritableVideo(_:)              — checks if ExifTool can write to a file
-//   - splitByMediaType(_:)               — splits URLs by image/QuickTime/other
-//   - parseErrorSummary(_:)              — user-friendly error extraction
+//   - imageExtensions / videoExtensions    — shared sets of known extensions
+//   - isSupportedFile(_:)                  — checks if a URL is a supported type
+//   - mediaType(for:)                      — returns .image or .video for a URL
+//   - isUnwritableVideo(_:)                — checks if ExifTool can write to a file
+//   - splitByMediaType(_:)                 — splits URLs by image/QuickTime/other
+//   - parseErrorSummary(_:)                — user-friendly error extraction
 // ============================================================================
 
 extension ExifToolService {
 
     // MARK: - Media Type Helpers
+
+    /// Set of known image file extensions.
+    /// Shared across the app — `FileListViewModel` uses this as the single
+    /// source of truth for image extension detection.
+    static let imageExtensions: Set<String> = [
+        "jpg", "jpeg", "png", "tiff", "tif", "gif", "bmp", "heic", "heif",
+        "raw", "cr2", "cr3", "nef", "arw", "dng", "orf", "rw2", "sr2",
+        "webp", "ico", "psd"
+    ]
 
     /// Set of known video file extensions.
     /// Shared across the app — `FileListViewModel` uses this as the single
@@ -25,6 +36,21 @@ extension ExifToolService {
         "mp4", "mov", "m4v", "avi", "mkv", "wmv", "flv", "webm",
         "ts", "mts", "m2ts", "3gp", "3g2", "ogv", "mxf", "mpg", "mpeg"
     ]
+
+    /// Returns true if the file extension is a supported image or video type.
+    static func isSupportedFile(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        return imageExtensions.contains(ext) || videoExtensions.contains(ext)
+    }
+
+    /// Returns the MediaType for a given URL based on its extension.
+    static func mediaType(for url: URL) -> MediaType {
+        let ext = url.pathExtension.lowercased()
+        if videoExtensions.contains(ext) {
+            return .video
+        }
+        return .image
+    }
 
     /// Video extensions that use QuickTime containers (MP4/MOV/M4V).
     /// These support `-QuickTime:CreationDate` for date writes.
@@ -124,7 +150,7 @@ extension ExifToolService {
         }
 
         // Normalize ISO-like strings: YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS
-        var s = stripped.replacingOccurrences(of: "T", with: " ")
+        let s = stripped.replacingOccurrences(of: "T", with: " ")
         // Split into date and time (if present)
         let parts = s.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
         guard parts.count > 0 else { return stripped }

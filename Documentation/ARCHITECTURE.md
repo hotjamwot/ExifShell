@@ -116,7 +116,7 @@ ExifShell/ExifShell/
 
 ### ExifToolService (Service Layer — Core)
 - **Path resolution:** Locates `exiftool` at static init time by checking common paths (`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/opt/local/bin`) and falling back to `which exiftool`. This ensures the app works from Terminal, Xcode, or a bundled `.app` regardless of PATH.
-- **Read (full batch):** `readAllMetadata(from:)` — calls `exiftool -json -DateTimeOriginal -CreateDate -ModifyDate -FileModifyDate -Description -ImageDescription -Caption-Abstract -Subject -Keywords -LastKeywordXMP -Duration -ImageWidth -ImageHeight <files...>` once for all files, decodes JSON, returns `[URL: FileMetadata]`. The `FileMetadata` struct includes a `dateSource: DateSource?` field that tracks whether `dateTimeOriginal` came from the embedded tag, `CreateDate`, or the filesystem `FileModifyDate`.
+- **Read (full batch):** `readAllMetadata(from:)` — calls `exiftool -json -DateTimeOriginal -QuickTime:CreationDate -CreateDate -ModifyDate -FileModifyDate -Description -ImageDescription -Caption-Abstract -Subject -Keywords -LastKeywordXMP -Duration -ImageWidth -ImageHeight -Make -Model -FileType -FileTypeExtension <files...>` once for all files, decodes JSON, returns `[URL: FileMetadata]`. The `FileMetadata` struct includes a `dateSource: DateSource?` field that tracks whether `dateTimeOriginal` came from the embedded tag, `CreateDate`, or the filesystem `FileModifyDate`.
 - **Read (date only batch):** `readDateTimeOriginal(from:)` — legacy method, same pattern but only reads DateTimeOriginal.
 - **Write (date):** Splits images/videos via `splitByMediaType`. Images get `-EXIF:DateTimeOriginal=`, `-CreateDate=`, `-ModifyDate=`, and cleared offset tags. QuickTime videos get `-QuickTime:CreationDate=`, `-CreateDate=`, `-ModifyDate=`, `-DateTimeOriginal=`. Other videos get generic `-DateTimeOriginal=`, `-CreateDate=`, `-ModifyDate=`.
 - **Write (description):** Calls `exiftool -overwrite_original -Description="<value>" -ImageDescription="<value>" -Caption-Abstract="<value>" <files...>` for images. Videos only get `-Description=`.
@@ -143,7 +143,7 @@ ExifShell/ExifShell/
 - `var bulkEditDescriptionValue: String` — the text field value from the Description bulk edit bar (separate from the date value).
 - `lastSaveFeedback: SaveFeedback?` — holds the most recent DateTimeOriginal save result.
 - `lastDescriptionSaveFeedback: SaveFeedback?` — holds the most recent Description save result.
-- `importFiles(_:)` / `importFolder(_:)` — validates image types via extension check, deduplicates by URL, batch-reads full metadata via `ExifToolService.readAllMetadata(from:)` in chunks of 80 files with live determinate progress, populates all fields including createDate, modifyDate, description, imageDescription, captionAbstract.
+- `importFiles(_:)` / `importFolder(_:)` — validates image types via extension check, deduplicates by URL, batch-reads full metadata via `ExifToolService.readAllMetadata(from:)` in chunks of 200 files with live determinate progress, populates all fields including createDate, modifyDate, description, imageDescription, captionAbstract.
 - `clearAll()` — removes all files and resets state (⌘K shortcut).
 - `applyBulkEdit()` — sets `dateTimeOriginal` on all `selectedFiles` to `bulkEditValue`.
 - `applyBulkEditDescription()` — sets `description` on all `selectedFiles` to `bulkEditValue`.
@@ -153,9 +153,9 @@ ExifShell/ExifShell/
   3. Groups dirty description files by value → `writeDescription()` per group.
   4. Only marks a file clean if ALL its field writes succeeded.
   5. Updates independent feedback for date and description saves.
-- `sanitiseSelected()` — operates on the **currently selected files** (`selectedFiles`). Saves dirty files first, then runs a **Phase 1 pre-write** for files whose `dateSource == .fileModifyDate` (these have no embedded date tag on disk, so the main sanitise pipeline would silently do nothing). The pre-write writes each file's own in-memory date value (timezone stripped) to a proper `DateTimeOriginal`/`QuickTime:CreationDate` tag, then the main pipeline processes files in **batches of 80** with live determinate progress (`"Sanitising (X/Y)..."`), skips unwritable formats (AVI, MPEG) with a warning, then re-reads all metadata from disk to refresh the display.
+- `sanitiseSelected()` — operates on the **currently selected files** (`selectedFiles`). Saves dirty files first, then runs a **Phase 1 pre-write** for files whose `dateSource == .fileModifyDate` (these have no embedded date tag on disk, so the main sanitise pipeline would silently do nothing). The pre-write writes each file's own in-memory date value (timezone stripped) to a proper `DateTimeOriginal`/`QuickTime:CreationDate` tag, then the main pipeline processes files in **batches of 200** with live determinate progress (`"Sanitising (X/Y)..."`), skips unwritable formats (AVI, MPEG) with a warning, then re-reads all metadata from disk to refresh the display.
 - `sanitiseAll()` — runs the same sanitise pipeline for all loaded files, not just selected files.
-- `renameAll()` — saves dirty files first, then processes files in **batches of 80** with live determinate progress (`"Renaming (X/Y)..."`), calls `ExifToolService.renameFiles()` with the in-memory metadata content, updates the in-memory URL for each renamed file from the returned path mapping.
+- `renameAll()` — saves dirty files first, then processes files in **batches of 200** with live determinate progress (`"Renaming (X/Y)..."`), calls `ExifToolService.renameFiles()` with the in-memory metadata content, updates the in-memory URL for each renamed file from the returned path mapping.
 
 ### DropZoneView
 - Purely visual. Shows the empty-state icon and instructions when no files are loaded.
@@ -213,7 +213,7 @@ ExifShell/ExifShell/
 
 ## Data Flow
 
-1. **Import:** User drops files → `ContentView.onDrop` resolves URLs → ViewModel filters by extension, deduplicates, immediately appends placeholder `ImageFile` entries to the list → reads metadata in batches of 80 via `loadMetadata(for:)` → updates `operationProgress` and `operationMessage` after each batch → populates all fields including date, description, create/modify/file-modify dates, imageDescription, captionAbstract, subject. For files with no embedded date tags (MPG/MPEG), `dateTimeOriginal` is populated from the filesystem `FileModifyDate` as a last resort, with `dateSource` set to `.fileModifyDate`.
+1. **Import:** User drops files → `ContentView.onDrop` resolves URLs → ViewModel filters by extension, deduplicates, immediately appends placeholder `ImageFile` entries to the list → reads metadata in batches of 200 via `loadMetadata(for:)` → updates `operationProgress` and `operationMessage` after each batch → populates all fields including date, description, create/modify/file-modify dates, imageDescription, captionAbstract, subject. For files with no embedded date tags (MPG/MPEG), `dateTimeOriginal` is populated from the filesystem `FileModifyDate` as a last resort, with `dateSource` set to `.fileModifyDate`.
 2. **Edit (single):** User clicks into the DateTimeOriginal or Description `TextField` → edits value → binding writes to the `@Observable` model → `didSet` on the respective field marks file dirty → UI auto-updates.
 3. **Edit (bulk):** User selects multiple files (⌘+click) → bulk edit bars appear → types a value → presses Enter or "Apply" → `applyBulkEdit()` or `applyBulkEditDescription()` sets value on selected files, which calls `invalidateSort()` to trigger a table refresh.
 4. **Review:** Preview panel shows grey (original) → green (proposed) diff for both date and description. Read-only metadata displayed below.
@@ -223,7 +223,7 @@ ExifShell/ExifShell/
 ## Key Design Decisions
 
 ### Batch Reads
-ExifTool can process multiple files in a single invocation. The service layer accepts `[URL]` for both reads and writes, reducing process spawn overhead dramatically. Metadata is loaded in chunks of 80 files so rows appear immediately and the UI can track determinate progress as each batch completes.
+ExifTool can process multiple files in a single invocation. The service layer accepts `[URL]` for both reads and writes, reducing process spawn overhead dramatically. Metadata is loaded in chunks of 200 files so rows appear immediately and the UI can track determinate progress as each batch completes.
 
 ### ExifTool Path Resolution
 The app does not rely on PATH propagation (which breaks in Xcode). Instead it checks common Homebrew/MacPorts install paths at startup and falls back to `which`.

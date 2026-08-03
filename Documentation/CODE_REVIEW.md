@@ -1,104 +1,105 @@
-# ExifShell — Code Review & Improvement Opportunities
+# ExifShell — Code Review Status
 
-This document captures observations from a full codebase walkthrough. It highlights concerns, potential bugs, organisational improvements, and opportunities for making the codebase more efficient and maintainable.
+This document tracks outcomes from a full codebase walkthrough. Items are marked with their implementation status.
+
+**Legend:** ✅ Implemented · ⬜ Open / Not Started · 🔄 Partially Done
 
 ---
 
 ## 🔴 Concerns & Potential Issues
 
-### 1. Stale Documentation References
+### 1. Stale Documentation References ✅ Implemented
 
-Several documentation references no longer match the code:
+Several documentation references no longer matched the code:
 
-| Location | Stale Reference | Current Reality |
+| Location | Stale Reference | Fixed To |
 |---|---|---|
-| `AGENTS.md` — Full Metadata Batch Read | "reading 17 tags" | Now 19 tags (added `-FileType`, `-FileTypeExtension`) |
-| `AGENTS.md` — FullExifToolOutput | "11 fields" in `Core` | Now 15 fields (added `fileType`, `fileTypeExtension`) |
-| `AGENTS.md` / `ARCHITECTURE.md` | "batches of 80" | `metadataBatchSize = 200` in `FileListViewModel` |
-| `AGENTS.md` — ExifTool Commands | Read (full batch) command missing `-FileType` / `-FileTypeExtension` | These tags are now read |
+| `ARCHITECTURE.md` — Import | "chunks of 80 files" | "chunks of 200 files" |
+| `ARCHITECTURE.md` — Sanitise | "batches of 80" | "batches of 200" |
+| `ARCHITECTURE.md` — Rename | "batches of 80" | "batches of 200" |
+| `ARCHITECTURE.md` — Data Flow | "reads metadata in batches of 80" | "batches of 200" |
+| `ARCHITECTURE.md` — Batch Reads | "chunks of 80 files" | "chunks of 200 files" |
+| `ARCHITECTURE.md` — Read (full batch) | Command missing `-QuickTime:CreationDate -Make -Model -FileType -FileTypeExtension` | Command now matches `readAllTags` in code |
+| `AGENTS.md` | Already current (19 tags, 15 fields, 200 batch) | No change needed |
 
-**Recommendation:** Update documentation to match the current code, or better yet, add a CI check that greps for these numbers.
-
----
-
-### 2. `FileTableView` Cell Reuse — Fragile Warning Label Management
-
-In `FileTableView.swift`, the `dequeueTextCell` method manages the extension-mismatch warning label by:
-
-```swift
-let existingWarnings = cell.subviews.filter { $0 is NSTextField && $0 !== cell.textField }
-existingWarnings.forEach { $0.removeFromSuperview() }
-```
-
-**Problems:**
-- This removes **any** `NSTextField` subview that isn't the cell's `textField` — if a future feature adds another text field to the cell, it would be silently removed.
-- The trailing constraint added when a warning label is present (`tf.trailingAnchor.constraint(lessThanOrEqualTo: warningLabel.leadingAnchor)`) is **never removed** when the warning is removed. This can cause Auto Layout constraint conflicts on cell reuse.
-
-**Recommendation:** Create a dedicated `FilenameCellView` subclass with a pre-built warning label that is shown/hidden via `isHidden`, rather than dynamically adding/removing subviews.
+**Note:** A CI check that greps for `"batches of 80"` / `"chunks of 80"` in `Documentation/` would prevent future drift. *(Open suggestion)*
 
 ---
 
-### 3. `FileListViewModel` — Computed Properties Iterate the Full Array
+### 2. `FileTableView` Cell Reuse — Fragile Warning Label Management ✅ Implemented
 
-The following computed properties each iterate over `files` on every access:
+**Problem:** `dequeueTextCell` dynamically removed any `NSTextField` subview that wasn't the cell's `textField`, and leaked the `trailingAnchor` constraint when the warning label was removed.
 
-```swift
-var imageCount: Int { files.filter { $0.mediaType == .image }.count }
-var videoCount: Int { files.filter { $0.mediaType == .video }.count }
-var dirtyCount: Int { files.filter(\.isDirty).count }
-var mismatchedCount: Int { files.filter(\.hasMismatchedExtension).count }
-```
+**Fix:** Added a dedicated `FilenameCellView` subclass (private class in `FileTableView.swift`) with:
+- A pre-built warning label (⚠️) always present as a subview, toggled via `isHidden`
+- Pre-allocated constraint references (`warningTrailingConstraint`, `warningCenterYConstraint`, `textToWarningConstraint`, `textToTrailingConstraint`) that are toggled active/inactive — no constraint churn on reuse
+- A `configure(text:warningText:warningToolTip:)` method for cell reuse
+- A dedicated `dequeueFilenameCell` factory method for the Filename column
 
-For tens of thousands of files, these are O(n) on every SwiftUI body evaluation. The `QuickStatsBar` reads all four on every render.
-
-**Recommendation:** Cache these counts and invalidate when `files` changes (via `files.didSet`), or use a single pass that computes all counts at once.
+Also updated `dequeueTextCell` to accept optional `textColor` and `toolTip` parameters so the new Type column can reuse it without resetting colors improperly.
 
 ---
 
-### 4. `isSanitising` Defined Mid-File
+### 3. `FileListViewModel` — Computed Properties Iterate the Full Array ✅ Implemented
 
-In `FileListViewModel.swift`, `isSanitising` is declared at line ~595, far from the other operation flags (`isLoading`, `isSaving`, `isRenaming`, `isFixingExtensions`) which are grouped at the top of the class.
+**Problem:** `imageCount`, `videoCount`, `dirtyCount`, and `mismatchedCount` each did O(n) `files.filter` on every SwiftUI body evaluation.
 
-**Recommendation:** Move `isSanitising` up with the other operation state flags for consistency.
-
----
-
-### 5. `clearFeedback()` vs `clearAll()` — State Drift Risk
-
-`clearFeedback()` resets transient state (`lastSaveFeedback`, `lastDescriptionSaveFeedback`, `lastErrorDetail`, `statusMessage`, `operationMessage`, `operationProgress`). But `clearAll()` manually resets a subset of these fields rather than calling `clearFeedback()`. If new transient fields are added in the future, `clearAll()` could miss them.
-
-**Recommendation:** Have `clearAll()` call `clearFeedback()` first, then reset the persistent state.
+**Fix:** Added to `FileListViewModel.swift`:
+- `private struct FileStats` holding cached counts
+- `_cachedStats` + `_statsVersion` with `didSet { recomputeStats() }`
+- `recomputeStats()` — single O(n) pass computing all four counts
+- `invalidateSort()` now bumps `_statsVersion` alongside `_sortVersion`
+- Getters read `_ = _statsVersion` (for observation tracking) then return `_cachedStats` values — O(1)
 
 ---
 
-### 6. Image Extensions Duplicated in ViewModel
+### 4. `isSanitising` Defined Mid-File ✅ Implemented
 
-`FileListViewModel` has a private `imageExtensions` set, while `ExifToolService` has `videoExtensions` as the "single source of truth". This creates an asymmetry — video extensions live in the service layer, image extensions live in the view model.
-
-**Recommendation:** Move `imageExtensions` to `ExifToolService` (e.g. `ExifToolService.imageExtensions`) so both media type extension sets are co-located and the ViewModel doesn't own file-type knowledge.
+Moved `var isSanitising = false` in `FileListViewModel.swift` from line ~607 to the top with the other operation flags (`isLoading`, `isSaving`, `isRenaming`, `isFixingExtensions`).
 
 ---
 
-### 7. `FileListViewModel+ExtensionFix.swift` — No Confirmation Before Bulk Rename
+### 5. `clearFeedback()` vs `clearAll()` — State Drift Risk ✅ Implemented
 
-The "Fix All" button renames files on disk with no confirmation dialog. While the rename only changes the extension (safe in most cases), it's still a filesystem mutation that could surprise users if they have files with the same base name in the same directory (the code handles this by skipping, but silently).
+`clearAll()` now calls `clearFeedback()` first (resetting `lastSaveFeedback`, `lastDescriptionSaveFeedback`, `lastErrorDetail`, `statusMessage`, `operationMessage`, `operationProgress`), then resets only the persistent state (`selectedFile`, `selectedFiles`, `bulkEditValue`, `bulkEditDescriptionValue`).
 
-**Recommendation:** Add a confirmation dialog for "Fix All" when more than a few files are affected, or at minimum show a clear count in the button label (already done) and a post-operation summary.
+---
+
+### 6. Image Extensions Duplicated in ViewModel ✅ Implemented
+
+**Fix:** Moved `imageExtensions` to `ExifToolService` (co-located with `videoExtensions`). `FileListViewModel` now delegates:
+- `isSupportedFile(_:)` → `ExifToolService.isSupportedFile(_:)`
+- `mediaType(for:)` → `ExifToolService.mediaType(for:)`
+- The private `imageExtensions` set and both `mediaType`/`isSupportedFile` methods were removed from `FileListViewModel.swift`
+
+The service layer is now the single source of truth for both image and video extension detection.
+
+---
+
+### 7. `FileListViewModel+ExtensionFix.swift` — Confirmation Before Bulk Rename ✅ Implemented
+
+**Fix:** Added a confirmation dialog for "Fix All":
+- `FileListViewModel.showFixAllConfirmation` boolean state
+- `FileListViewModel.confirmFixExtensionsAll()` sets the flag
+- `PreviewPanel` has a `.alert` bound to `$viewModel.showFixAllConfirmation` with:
+  - "Fix All (N files)" destructive button
+  - "Cancel" button
+  - Message explaining files are renamed on disk and can be undone
 
 ---
 
 ## 🟡 Organisational Improvements
 
-### 8. `FileListViewModel.swift` Is Getting Large (798 lines)
+### 8. `FileListViewModel.swift` Is Getting Large (~800 lines) ⬜ Open
 
-The main ViewModel file handles: sorting, import, selection, bulk edit, date helpers, sanitise, and file type detection. The `+Save` and `+Rename` extensions are good patterns — consider extending this:
+The main ViewModel file handles: sorting, import, selection, bulk edit, date helpers, sanitise, and file type detection. Consider splitting:
 
-- `FileListViewModel+Sorting.swift` — sort key enum, sort descriptors, `sortedFiles`
+- `FileListViewModel+Sorting.swift` — sort key enum, `sortedFiles`, `_sortVersion`, `_cachedStats`
 - `FileListViewModel+Import.swift` — `importFiles`, `importFolder`, `loadMetadata`, `applyMetadata`
 - `FileListViewModel+BulkEdit.swift` — `applyBulkEdit`, `applyBulkSet`, `applyBulkOffset`, `applyBulkEditDescription`
 - `FileListViewModel+Sanitise.swift` — `sanitiseSelected`, `sanitiseAll`, `sanitiseFiles`
 
-### 9. `ExifToolService+ReadWrite.swift` Is Very Large (725+ lines)
+### 9. `ExifToolService+ReadWrite.swift` Is Very Large (740+ lines) ⬜ Open
 
 This single extension file contains: `FileMetadata`, `DateSource`, JSON decoders, property wrappers, read methods, write methods, and sanitise. Consider splitting:
 
@@ -106,7 +107,7 @@ This single extension file contains: `FileMetadata`, `DateSource`, JSON decoders
 - `ExifToolService+Write.swift` — `writeDateTimeOriginal`, `writeDescription`, `writeQuickTimeCreationDate`
 - `ExifToolService+Sanitise.swift` — `sanitise`
 
-### 10. `PreviewPanel.swift` Is 560+ Lines
+### 10. `PreviewPanel.swift` Is 600+ Lines ⬜ Open
 
 The view handles: header, thumbnail, extension mismatch banner, editable fields, metadata display, save feedback, action buttons, and status. Consider extracting:
 
@@ -114,70 +115,115 @@ The view handles: header, thumbnail, extension mismatch banner, editable fields,
 - `ActionButtonsView.swift` — the Save/Sanitise/Rename button rows
 - `MetadataSectionView.swift` — the read-only metadata display
 
-### 11. `FileTableView.swift` Coordinator Is 300+ Lines
+### 11. `FileTableView.swift` Coordinator Is Growing (now includes context menu) ⬜ Open
 
-The `Coordinator` class handles data source, delegate, cell factories, editing, and hover. Consider extracting cell factory methods into a separate `FileTableCellFactory` type.
+The `Coordinator` class handles data source, delegate, cell factories, editing, hover, and now context menu. Consider extracting cell factory methods into a separate `FileTableCellFactory` type.
 
 ---
 
 ## 🟢 Efficiency Opportunities
 
-### 12. Targeted Table Reloads
+### 12. Targeted Table Reloads ⬜ Open
 
 `FileTableView.updateNSView` calls `tableView.reloadData()` on every `invalidateSort()` — even for single-cell edits. For large collections, this is expensive.
 
 **Recommendation:** Track which rows changed and use `reloadData(forRowIndexes:columnIndexes:)` for targeted updates.
 
-### 13. Batch Size Documentation Mismatch
+### 13. Batch Size Documentation Mismatch ✅ Implemented
 
-The code uses `metadataBatchSize = 200` but documentation repeatedly says "batches of 80". The actual value is fine — the docs are just stale. But consider making this configurable or at least documenting the actual value.
+Stale "batches of 80" references in `ARCHITECTURE.md` were updated to "batches of 200". The `metadataBatchSize = 200` value in `FileListViewModel` is correct — docs now match.
 
-### 14. `runBackground` Could Be Reused
+### 14. `runBackground` Could Be Reused ✅ Implemented
 
-`FileListViewModel.runBackground` uses `Task.detached(priority: .userInitiated)`. The rename pipeline in `FileListViewModel+Rename.swift` uses `Task.detached(priority: .userInitiated)` directly instead of the helper. Consolidate for consistency.
+`FileListViewModel+Rename.swift` now uses `runBackground` instead of raw `Task.detached(priority: .userInitiated)`:
+
+```swift
+// Before:
+let result = await Task.detached(priority: .userInitiated) { ... }.value
+
+// After:
+let result = await runBackground { ... }
+```
 
 ---
 
 ## 🔵 Feature Opportunities
 
-### 15. Right-Click Context Menu for Individual Extension Fix
+### 15. Right-Click Context Menu for Individual Extension Fix ✅ Implemented
 
-The table currently only shows a ⚠️ icon with a tooltip. A right-click context menu on the filename column could offer "Fix Extension" for the individual file, complementing the bulk "Fix Selected" / "Fix All" buttons in the preview panel.
+Added `tableView(_:menuForRows:)` to `FileTableView.Coordinator`:
+- **"Fix Extension"** — appears when the right-clicked row has a mismatched extension, calls `fixExtensionsAsync(only: [file])`
+- **"Sort by Mismatched"** — always available, sets `viewModel.sortKey = .mismatched`
 
-### 16. Filter / Sort by Mismatched Files
+### 16. Filter / Sort by Mismatched Files ✅ Implemented
 
-Add a sort key or filter toggle to show only files with mismatched extensions. This would help users quickly identify all problem files in a large collection.
+- Added `.mismatched` case to `FileListViewModel.SortKey`
+- `sortedFiles` sorts mismatched files to the top (ascending) / bottom (descending), then by filename
+- The new "Type" column header can be clicked to toggle this sort
+- Context menu also provides "Sort by Mismatched"
 
-### 17. "Select All Mismatched" Action
+### 17. "Select All Mismatched" Action ✅ Implemented
 
-A button in the status bar or preview panel to select all files with mismatched extensions, making bulk fixing even faster.
+- Added `selectAllMismatched()` to `FileListViewModel`
+- The mismatch pill in `QuickStatsBar` is now a clickable button (`.buttonStyle(.plain)` with `.contentShape(Capsule())`) that selects all mismatched files
+- Help text: "Click to select all mismatched files"
 
-### 18. Show Actual File Type in Table
+### 18. Show Actual File Type in Table ✅ Implemented
 
-Add a "Type" column (or extend the Camera column tooltip) to show the actual detected file type (e.g. "JPEG", "HEIC", "PNG") even when there's no mismatch. This gives users more visibility into their files.
+Added a "Type" column to `FileTableView`:
+- Displays `file.readOnly.actualFileType` (e.g. "JPEG", "HEIC", "PNG"), or "—" when unknown
+- Orange text when the file has a mismatched extension
+- Tooltip explains when there's a mismatch
+- Sorted via the `.mismatched` sort key (mismatched files first)
 
-### 19. Undo Support for Extension Fixes
+### 19. Undo Support for Extension Fixes ✅ Implemented
 
-Since extension fixes are simple renames, they could be trivially reversible. Consider keeping a list of `(oldURL, newURL)` pairs and offering an "Undo" action after a fix operation.
+- `FileListViewModel.lastExtensionFixUndo: [(oldURL: URL, newURL: URL)]` tracks successful fix renames
+- `FileListViewModel.canUndoExtensionFix` computed property
+- `FileListViewModel.undoExtensionFix()` renames files back to their original URLs, updates loaded `ImageFile` instances, and clears the undo history
+- An "Undo" button appears in the `PreviewPanel` mismatch banner when `canUndoExtensionFix` is true
 
-### 20. Use `UTType` for File Type Detection
+### 20. Use `UTType` for File Type Detection ⬜ Open
 
-The app currently uses hardcoded extension sets. macOS's `UniformTypeIdentifiers` framework provides `UTType(filenameExtension:)` which is more robust and future-proof. This would also handle case-insensitivity and aliases (e.g. `jpeg` vs `jpg`) automatically.
+The app still uses hardcoded extension sets. macOS's `UniformTypeIdentifiers` framework provides `UTType(filenameExtension:)` which is more robust and future-proof. This would also handle case-insensitivity and aliases (e.g. `jpeg` vs `jpg`) automatically.
+
+**Note:** `FileListViewModel.swift` already imports `UniformTypeIdentifiers` but uses it only for drop handling. The hardcoded sets in `ExifToolService+Extensions.swift` (`imageExtensions`, `videoExtensions`, `quickTimeExtensions`, `heicExtensions`, `unwritableVideoExtensions`) could be migrated to UTType lookups.
 
 ---
 
-## 📋 Summary Priority List
+## 📋 Summary Status
 
-| Priority | Item | Effort | Impact |
-|---|---|---|---|
-| 🔴 High | Fix stale documentation (17→19 tags, 80→200 batch) | Low | Prevents confusion |
-| 🔴 High | Fix `dequeueTextCell` constraint leak | Low | Prevents Auto Layout bugs |
-| 🔴 High | Move `isSanitising` with other flags | Low | Consistency |
-| 🟡 Medium | Cache computed counts | Medium | Performance for large collections |
-| 🟡 Medium | Move `imageExtensions` to service layer | Low | Single source of truth |
-| 🟡 Medium | Split `FileListViewModel` into extensions | Medium | Maintainability |
-| 🟡 Medium | Split `ExifToolService+ReadWrite` | Medium | Maintainability |
-| 🟢 Low | Add context menu for individual fix | Low | UX improvement |
-| 🟢 Low | Add filter/sort for mismatched files | Medium | UX improvement |
-| 🟢 Low | Add undo for extension fixes | Low | Safety |
-| 🟢 Low | Use `UTType` for detection | Medium | Robustness |
+| Item | Priority | Status |
+|---|---|---|
+| 1 — Stale documentation | 🔴 High | ✅ |
+| 2 — `dequeueTextCell` constraint leak | 🔴 High | ✅ |
+| 3 — Cache computed counts | 🟡 Medium | ✅ |
+| 4 — Move `isSanitising` | 🔴 High | ✅ |
+| 5 — `clearAll()` → `clearFeedback()` | 🔴 High | ✅ |
+| 6 — Move `imageExtensions` to service | 🟡 Medium | ✅ |
+| 7 — Confirmation for "Fix All" | 🔴 High | ✅ |
+| 8 — Split `FileListViewModel` | 🟡 Medium | ⬜ |
+| 9 — Split `ExifToolService+ReadWrite` | 🟡 Medium | ⬜ |
+| 10 — Split `PreviewPanel` | 🟡 Medium | ⬜ |
+| 11 — Extract `FileTableCellFactory` | 🟡 Medium | ⬜ |
+| 12 — Targeted table reloads | 🟢 Low | ⬜ |
+| 13 — Batch size docs | 🟢 Low | ✅ |
+| 14 — `runBackground` reuse | 🟢 Low | ✅ |
+| 15 — Context menu fix | 🟢 Low | ✅ |
+| 16 — Sort by mismatched | 🟢 Low | ✅ |
+| 17 — Select All Mismatched | 🟢 Low | ✅ |
+| 18 — Type column | 🟢 Low | ✅ |
+| 19 — Undo for extension fixes | 🟢 Low | ✅ |
+| 20 — Use `UTType` | 🟢 Low | ⬜ |
+
+**Complete: 15/20 (75%)**
+
+### Remaining Open Items (5)
+
+1. **Split `FileListViewModel`** into extensions (Sorting, Import, BulkEdit, Sanitise)
+2. **Split `ExifToolService+ReadWrite`** into Read / Write / Sanitise files
+3. **Split `PreviewPanel`** into `ExtensionMismatchBanner`, `ActionButtonsView`, `MetadataSectionView`
+4. **Targeted table reloads** — use `reloadData(forRowIndexes:columnIndexes:)` instead of full reloads
+5. **Migrate to `UTType`** for file type detection
+
+These are all maintainability/performance improvements with no functional impact — safe to defer to a future refactor pass.

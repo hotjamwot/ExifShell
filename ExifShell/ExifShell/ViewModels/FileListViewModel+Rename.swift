@@ -79,8 +79,9 @@ extension FileListViewModel {
 
             // Use a progress handler to report per-pass granularity inside each chunk,
             // so the progress bar doesn't stall during the multi-pass ExifTool rename.
-            let result = await Task.detached(priority: .userInitiated) {
-                await ExifToolService.renameFiles(chunk) { passProgress, passMessage in
+            // runBackground is the shared helper for off-main-thread work.
+            let result = await runBackground {
+                ExifToolService.renameFiles(chunk) { passProgress, passMessage in
                     // Map the per-pass progress (0–1) into the chunk's progress window.
                     let overallProgress = chunkStartProgress + passProgress * (chunkEndProgress - chunkStartProgress)
                     Task { @MainActor in
@@ -90,7 +91,7 @@ extension FileListViewModel {
                         )
                     }
                 }
-            }.value
+            }
 
             if result.success {
                 let mappingCount = result.pathMapping.count

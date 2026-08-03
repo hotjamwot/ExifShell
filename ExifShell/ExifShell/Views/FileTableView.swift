@@ -79,6 +79,7 @@ private struct FileTableNSView: NSViewRepresentable {
             ("dateTimeOriginal",  "Date/Time Original",    180, "dateTimeOriginal"),
             ("description",       "Description",           280, "description"),
             ("camera",            "Camera",                140, "camera"),
+            ("type",              "Type",                  80,  "type"),
         ]
 
         for def in columnDefs {
@@ -138,11 +139,99 @@ private struct FileTableNSView: NSViewRepresentable {
         case .originalDateTime: key = "dateTimeOriginal"
         case .description:      key = "description"
         case .camera:           key = "camera"
+        case .mismatched:       key = "type"
         }
         let desired = NSSortDescriptor(key: key, ascending: viewModel.sortAscending)
         if tableView.sortDescriptors.first?.key != key
             || tableView.sortDescriptors.first?.ascending != viewModel.sortAscending {
             tableView.sortDescriptors = [desired]
+        }
+    }
+}
+
+// MARK: - FilenameCellView
+
+/// A dedicated cell view for the Filename column that includes a pre-built
+/// warning label (⚠️) for extension mismatches.
+///
+/// The warning label is always present as a subview but toggled via `isHidden`.
+/// This avoids the fragile pattern of dynamically adding/removing subviews
+/// during cell reuse, which previously removed ANY `NSTextField` subview
+/// that wasn't the cell's `textField` and leaked Auto Layout constraints
+/// when the warning was removed.
+private final class FilenameCellView: NSTableCellView {
+    /// The warning label shown when the file has a mismatched extension.
+    private let warningLabel = NSTextField(labelWithString: "⚠️")
+
+    /// Constraint references so we can toggle without creating duplicates.
+    private var warningTrailingConstraint: NSLayoutConstraint?
+    private var warningCenterYConstraint: NSLayoutConstraint?
+    private var textToWarningConstraint: NSLayoutConstraint?
+    private var textToTrailingConstraint: NSLayoutConstraint?
+
+    /// Sets the warning label's visibility without adding/removing subviews.
+    /// When hidden, the text field's trailing constraint returns to the
+    /// cell's trailing edge (the warning constraints are deactivated).
+    var isWarningVisible: Bool = false {
+        didSet {
+            guard isWarningVisible != oldValue else { return }
+            warningLabel.isHidden = !isWarningVisible
+
+            warningTrailingConstraint?.isActive = isWarningVisible
+            warningCenterYConstraint?.isActive = isWarningVisible
+            textToWarningConstraint?.isActive = isWarningVisible
+            textToTrailingConstraint?.isActive = !isWarningVisible
+        }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+
+        let tf = NSTextField(labelWithString: "")
+        tf.translatesAutoresizingMaskIntoConstraints = false
+        tf.font = .systemFont(ofSize: NSFont.systemFontSize)
+        tf.lineBreakMode = .byTruncatingMiddle
+
+        addSubview(tf)
+        textField = tf
+
+        warningLabel.translatesAutoresizingMaskIntoConstraints = false
+        warningLabel.font = .systemFont(ofSize: NSFont.systemFontSize)
+        warningLabel.isHidden = true
+        addSubview(warningLabel)
+
+        // Pre-build all constraints but keep the warning ones inactive
+        // until isWarningVisible = true.
+        textToTrailingConstraint = tf.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4)
+        warningTrailingConstraint = warningLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4)
+        warningCenterYConstraint = warningLabel.centerYAnchor.constraint(equalTo: centerYAnchor)
+        textToWarningConstraint = tf.trailingAnchor.constraint(lessThanOrEqualTo: warningLabel.leadingAnchor, constant: -4)
+
+        NSLayoutConstraint.activate([
+            tf.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            tf.centerYAnchor.constraint(equalTo: centerYAnchor),
+            textToTrailingConstraint!,
+        ])
+
+        // Pre-build the warning label (hidden by default).
+        // Its constraints are inactive so hidden cells don't participate in layout.
+        warningLabel.setContentHuggingPriority(.required, for: .horizontal)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    /// Updates the cell's text and warning visibility for reuse.
+    func configure(text: String, warningText: String?, warningToolTip: String?) {
+        textField?.stringValue = text
+        if let warningText {
+            warningLabel.stringValue = warningText
+            warningLabel.toolTip = warningToolTip
+            isWarningVisible = true
+        } else {
+            isWarningVisible = false
         }
     }
 }
@@ -240,14 +329,13 @@ extension FileTableNSView {
             switch columnID {
 
             case "filename":
-                let cell = dequeueTextCell(
+                let cell = dequeueFilenameCell(
                     tableView: tableView,
                     id: cellID,
                     text: file.filename,
                     warningText: file.hasMismatchedExtension ? "⚠️" : nil,
                     warningToolTip: file.mismatchDescription
                 )
-                cell.textField?.lineBreakMode = .byTruncatingMiddle
                 cell.textField?.toolTip = file.hasMismatchedExtension
                     ? "\(file.mismatchDescription ?? "Extension mismatch") — click Fix Extension in the preview to correct"
                     : file.filename
@@ -266,6 +354,17 @@ extension FileTableNSView {
                     default:                  return nil
                     }
                 }()
+                return cell
+
+            case "type":
+                // Show the actual detected file type (e.g. "JPEG", "HEIC", "PNG").
+                // When there's a mismatch, show the actual type in orange.
+                let displayText = file.readOnly.actualFileType ?? "—"
+                let cell = dequeueTextCell(tableView: tableView, id: cellID, text: displayText)
+                cell.textField?.textColor = file.hasMismatchedExtension ? .orange : .labelColor
+                cell.textField?.toolTip = file.hasMismatchedExtension
+                    ? "Actual type: \(displayText) — filename suffix doesn't match"
+                    : "Actual file type detected by ExifTool"
                 return cell
 
             case "dateTimeOriginal":
@@ -314,6 +413,7 @@ extension FileTableNSView {
             case "dateTimeOriginal": viewModel.sortKey = .originalDateTime
             case "description":      viewModel.sortKey = .description
             case "camera":           viewModel.sortKey = .camera
+            case "type":             viewModel.sortKey = .mismatched
             default:                 return
             }
             viewModel.sortAscending = desc.ascending
@@ -380,61 +480,107 @@ extension FileTableNSView {
 
         // MARK: Cell Factories — With NSTableView Reuse
 
-        /// Dequeues or creates a read-only text cell for the given column identifier.
+        /// Dequeues or creates a plain read-only text cell for the given column identifier.
         /// Uses `tableView.makeView(withIdentifier:owner:)` so views are recycled.
-        ///
-        /// When `warningText` is non-nil, a warning label (e.g. "⚠️") is shown
-        /// at the trailing edge of the cell to indicate a mismatched extension.
-        /// When nil, any existing warning label is removed (for cell reuse).
         private func dequeueTextCell(tableView: NSTableView,
                                       id: NSUserInterfaceItemIdentifier,
                                       text: String,
-                                      warningText: String? = nil,
-                                      warningToolTip: String? = nil) -> NSTableCellView
+                                      textColor: NSColor? = nil,
+                                      toolTip: String? = nil) -> NSTableCellView
         {
-            let cell: NSTableCellView
             if let existing = tableView.makeView(withIdentifier: id, owner: self) as? NSTableCellView {
-                cell = existing
-                cell.textField?.stringValue = text
-            } else {
-                let newCell = NSTableCellView()
-                newCell.identifier = id
-
-                let tf = NSTextField(labelWithString: text)
-                tf.translatesAutoresizingMaskIntoConstraints = false
-                tf.font = .systemFont(ofSize: NSFont.systemFontSize)
-                tf.lineBreakMode = .byTruncatingMiddle
-
-                newCell.addSubview(tf)
-                newCell.textField = tf
-
-                NSLayoutConstraint.activate([
-                    tf.leadingAnchor.constraint(equalTo: newCell.leadingAnchor, constant: 8),
-                    tf.trailingAnchor.constraint(equalTo: newCell.trailingAnchor, constant: -4),
-                    tf.centerYAnchor.constraint(equalTo: newCell.centerYAnchor),
-                ])
-                cell = newCell
+                existing.textField?.stringValue = text
+                if let textColor {
+                    existing.textField?.textColor = textColor
+                }
+                if let toolTip {
+                    existing.textField?.toolTip = toolTip
+                }
+                return existing
             }
 
-            // Manage the warning label for extension mismatches.
-            // Remove any existing warning label first (for cell reuse).
-            let existingWarnings = cell.subviews.filter { $0 is NSTextField && $0 !== cell.textField }
-            existingWarnings.forEach { $0.removeFromSuperview() }
+            let cell = NSTableCellView()
+            cell.identifier = id
 
-            if let warningText, let tf = cell.textField {
-                let warningLabel = NSTextField(labelWithString: warningText)
-                warningLabel.translatesAutoresizingMaskIntoConstraints = false
-                warningLabel.font = .systemFont(ofSize: NSFont.systemFontSize)
-                warningLabel.toolTip = warningToolTip
-                cell.addSubview(warningLabel)
-                NSLayoutConstraint.activate([
-                    warningLabel.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
-                    warningLabel.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                ])
-                // Constrain the text field to not overlap the warning label
-                tf.trailingAnchor.constraint(lessThanOrEqualTo: warningLabel.leadingAnchor, constant: -4).isActive = true
+            let tf = NSTextField(labelWithString: text)
+            tf.translatesAutoresizingMaskIntoConstraints = false
+            tf.font = .systemFont(ofSize: NSFont.systemFontSize)
+            tf.lineBreakMode = .byTruncatingMiddle
+
+            cell.addSubview(tf)
+            cell.textField = tf
+
+            NSLayoutConstraint.activate([
+                tf.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+                tf.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                tf.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            ])
+            return cell
+        }
+
+        // MARK: Context Menu
+
+        func tableView(_ tableView: NSTableView, menuForRows rows: IndexSet) -> NSMenu? {
+            guard let firstRow = rows.first, firstRow < files.count else { return nil }
+            let file = files[firstRow]
+
+            let menu = NSMenu()
+
+            if file.hasMismatchedExtension {
+                let fixItem = NSMenuItem(
+                    title: "Fix Extension",
+                    action: #selector(fixExtensionForRow(_:)),
+                    keyEquivalent: ""
+                )
+                fixItem.target = self
+                fixItem.tag = firstRow
+                fixItem.toolTip = file.mismatchDescription
+                menu.addItem(fixItem)
+                menu.addItem(.separator())
             }
 
+            // Provide sort-by-type for the current file's actual type
+            let sortItem = NSMenuItem(
+                title: "Sort by Mismatched",
+                action: #selector(sortByMismatched(_:)),
+                keyEquivalent: ""
+            )
+            sortItem.target = self
+            menu.addItem(sortItem)
+
+            return menu
+        }
+
+        @objc private func fixExtensionForRow(_ sender: NSMenuItem) {
+            let row = sender.tag
+            guard row < files.count else { return }
+            let file = files[row]
+            Task { await viewModel.fixExtensionsAsync(only: [file]) }
+        }
+
+        @objc private func sortByMismatched(_ sender: NSMenuItem) {
+            viewModel.sortKey = .mismatched
+            viewModel.sortAscending = true
+        }
+
+        /// Dequeues or creates a `FilenameCellView` for the Filename column.
+        /// Uses `tableView.makeView(withIdentifier:owner:)` so views are recycled.
+        /// The cell contains a pre-built warning label that is shown/hidden
+        /// via `isHidden` rather than dynamically adding/removing subviews.
+        private func dequeueFilenameCell(tableView: NSTableView,
+                                          id: NSUserInterfaceItemIdentifier,
+                                          text: String,
+                                          warningText: String?,
+                                          warningToolTip: String?) -> FilenameCellView
+        {
+            if let existing = tableView.makeView(withIdentifier: id, owner: self) as? FilenameCellView {
+                existing.configure(text: text, warningText: warningText, warningToolTip: warningToolTip)
+                return existing
+            }
+
+            let cell = FilenameCellView()
+            cell.identifier = id
+            cell.configure(text: text, warningText: warningText, warningToolTip: warningToolTip)
             return cell
         }
 
