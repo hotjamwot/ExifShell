@@ -132,8 +132,24 @@ enum ExifToolService {
 
         do {
             try process.run()
+
+            // Drain stdout on a background queue so the pipe buffer never
+            // fills up. Calling waitUntilExit() before reading can deadlock
+            // when output exceeds the ~64KB pipe buffer (common with 100+
+            // files of JSON): the child blocks on write() and never exits,
+            // so waitUntilExit() blocks forever and the app appears to hang.
+            let outHandle = outPipe.fileHandleForReading
+            let group = DispatchGroup()
+            var data = Data()
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                data = outHandle.readDataToEndOfFile()
+                group.leave()
+            }
+
             process.waitUntilExit()
-            let data = outPipe.fileHandleForReading.readDataToEndOfFile()
+            group.wait()
+
             // ExifTool can return non-zero exit codes for warnings while
             // still producing valid JSON on stdout. We trust stdout data
             // if it's non-empty, even if exit code indicates a warning.
@@ -167,10 +183,32 @@ enum ExifToolService {
 
         do {
             try process.run()
-            process.waitUntilExit()
 
-            let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            // Drain stdout and stderr on background queues so the pipe
+            // buffers never fill up. Calling waitUntilExit() before reading
+            // can deadlock when output exceeds the ~64KB pipe buffer (common
+            // with 100+ files): the child blocks on write() and never exits,
+            // so waitUntilExit() blocks forever and the app appears to hang.
+            let outHandle = outPipe.fileHandleForReading
+            let errHandle = errPipe.fileHandleForReading
+            let group = DispatchGroup()
+            var outData = Data()
+            var errData = Data()
+
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                outData = outHandle.readDataToEndOfFile()
+                group.leave()
+            }
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                errData = errHandle.readDataToEndOfFile()
+                group.leave()
+            }
+
+            process.waitUntilExit()
+            group.wait()
+
             let output = String(data: outData, encoding: .utf8) ?? ""
             let errorOutput = String(data: errData, encoding: .utf8) ?? ""
             let combined = [output, errorOutput]

@@ -289,6 +289,16 @@ The "Sanitise Selected" button in the Preview Panel runs an ExifTool invocation 
 
 Files with XMP-style ISO 8601 dates (e.g. `2010-03-27T01:40:19+00:00`) cannot be parsed by the app's `exifDateFormatter` (`yyyy:MM:dd HH:mm:ss`), causing the Offset feature to silently skip them. Sanitise reformats these to proper EXIF/QuickTime format.
 
+### Caveats (destructive — no backup, no undo)
+
+Sanitise uses `-overwrite_original`, so **no backup is kept and there is no undo**. It is destructive in three ways:
+
+1. **Overwrites ModifyDate** — copies DateTimeOriginal → ModifyDate, losing the file's true last-modified timestamp.
+2. **Can wipe Caption-Abstract** — `-Caption-Abstract<Description` copies Description into Caption-Abstract; if a file has a Caption-Abstract but an empty Description, the existing Caption-Abstract is erased.
+3. **Clears timezone offsets** — removes OffsetTime, OffsetTimeOriginal, OffsetTimeDigitized.
+
+Back up files before sanitising if the original values matter.
+
 ### Operations per media type
 
 **Images:**

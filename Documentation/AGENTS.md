@@ -152,6 +152,7 @@ static func writeDescription(_ value: String, to urls: [URL]) -> WriteResult {
 - **Mixed batches:** Use `splitByMediaType(_:)` to separate images from videos before write/sanitise operations.
 - **Write exit codes:** `runWriteTool` treats exit code 1 as success because all write operations use `-m` (ignore minor errors). ExifTool exits with code 1 for minor warnings even when writes succeed — treating it as failure produces false error messages.
 - **Read exit codes:** `runReadTool` treats non-empty stdout as success regardless of exit code, since ExifTool can emit valid JSON alongside warning exit codes.
+- **Drain pipes to avoid deadlock:** Always read stdout/stderr on a background queue (or via `readabilityHandler`) *before* `waitUntilExit()`. Calling `waitUntilExit()` first can deadlock when output exceeds the ~64KB pipe buffer (common with 100+ files) — the child blocks on `write()` and never exits, so the app hangs. See `runReadTool`/`runWriteTool` in `ExifToolService.swift`.
 
 ---
 
