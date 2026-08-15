@@ -199,6 +199,74 @@ struct PreviewPanel: View {
                             )
                         }
 
+                        // --- Invalid Date Format Warning ("Fix DTO") ---
+                        if file.dateNeedsFix {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "calendar.badge.exclamationmark")
+                                        .foregroundColor(.orange)
+                                    Text("Invalid Date Format")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundColor(.orange)
+                                }
+                                Text(file.dateFixDescription ?? "This file's DateTimeOriginal uses a non-EXIF format that ExifShell cannot parse.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                HStack(spacing: 8) {
+                                    Button {
+                                        viewModel.fixDTOSelected()
+                                    } label: {
+                                        HStack(spacing: 4) {
+                                            if viewModel.isFixingDTO {
+                                                ProgressView()
+                                                    .scaleEffect(0.6)
+                                                    .controlSize(.small)
+                                            }
+                                            Image(systemName: "arrow.triangle.2.circlepath")
+                                            Text(viewModel.selectedDTOFixCount > 0
+                                                 ? "Fix Selected (\(viewModel.selectedDTOFixCount))"
+                                                 : "Fix DTO")
+                                        }
+                                    }
+                                    .disabled(viewModel.isFixingDTO || viewModel.selectedDTOFixCount == 0)
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+
+                                    Button {
+                                        viewModel.fixDTOAll()
+                                    } label: {
+                                        HStack(spacing: 4) {
+                                            if viewModel.isFixingDTO {
+                                                ProgressView()
+                                                    .scaleEffect(0.6)
+                                                    .controlSize(.small)
+                                            }
+                                            Image(systemName: "arrow.triangle.2.circlepath")
+                                            Text(viewModel.dtoFixCount > 0
+                                                 ? "Fix All (\(viewModel.dtoFixCount))"
+                                                 : "Fix All")
+                                        }
+                                    }
+                                    .disabled(viewModel.isFixingDTO || viewModel.dtoFixCount == 0)
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+                                }
+                                Text("Fixing sets the cleaned EXIF date in-memory and marks the file dirty — review the diff, then press Save to commit.")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.orange.opacity(0.08))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                            )
+                        }
+
                         // --- Editable Fields ---
                         VStack(alignment: .leading, spacing: 16) {
                             fieldDiffRow(
@@ -207,7 +275,7 @@ struct PreviewPanel: View {
                                 current: file.dateTimeOriginal,
                                 isDirty: file.isDirty && file.dateTimeOriginal != file.originalDateTimeOriginal,
                                 sourceLabel: file.dateSourceLabel,
-                                needsSanitise: file.needsSanitise
+                                needsSanitise: file.dateNeedsFix
                             )
 
                             fieldDiffRow(
@@ -553,10 +621,10 @@ struct PreviewPanel: View {
                                 .fill(Color.orange.opacity(0.12))
                         )
                 }
-                // Show a sanitise warning badge if the date format is non-standard
+                // Show a warning badge if the date format is invalid
                 // (e.g. XMP ISO 8601 dates like "2010-03-27T01:40:19+00:00")
                 if needsSanitise {
-                    Text("⚠️ Sanitise")
+                    Text("⚠️ Invalid format")
                         .font(.system(size: 9, weight: .medium))
                         .foregroundColor(.orange)
                         .padding(.horizontal, 4)
@@ -565,7 +633,7 @@ struct PreviewPanel: View {
                             RoundedRectangle(cornerRadius: 3)
                                 .fill(Color.orange.opacity(0.12))
                         )
-                        .help("Date format needs sanitising — run Sanitise Selected")
+                        .help("Date format cannot be parsed — use the Fix Date/Time action above")
                 }
             }
 

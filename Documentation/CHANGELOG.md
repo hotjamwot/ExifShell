@@ -15,6 +15,17 @@ Format:
 
 ---
 
+## [2026-08-14] — DTO Fix: Strip Fractional Seconds
+
+### Fixed
+- `ExifToolService.normalizeToExifDateForFix` (new): Strips fractional seconds (e.g. `2024:09:28 17:08:43.93` → `2024:09:28 17:08:43`). iPhone/camera EXIF dates often include milliseconds after the seconds, which previously caused the "Fix DTO" action to report "skipped — could not be normalised" because the cleaned value was identical to the original.
+- `ImageFile.cleanedDateTimeOriginal`: Now uses `normalizeToExifDateForFix` so fractional seconds are stripped ONLY when the user explicitly runs the "Fix DTO" action — never silently on import. The read path (`normalizeToExifDate`) intentionally preserves fractional seconds so the ⚠️ flag still appears and the user reviews the change before saving.
+
+### Changed
+- `ImageFile.dateFixDescription`: Now mentions that the expected format is `YYYY:MM:DD HH:MM:SS` with no milliseconds or timezone offset, making the error message clearer for users.
+
+---
+
 ## [2026-03-08] — Code Review Implementation
 
 ### Added
@@ -51,3 +62,19 @@ Format:
 
 ### Changed
 - `ContentView`: Preview Panel now opens at its minimum width (~1/3) instead of the default 50/50 split — set `idealWidth` on the table pane (600) and preview pane (300) in the `HSplitView`.
+
+---
+
+## [2026-08-13] — Fix Date/Time Format (DTO) Feature
+
+### Added
+- `ImageFile`: `dateNeedsFix` — flags a DateTimeOriginal that isn't in EXIF `YYYY:MM:DD HH:MM:SS` format (e.g. ISO 8601 or trailing timezone); `cleanedDateTimeOriginal` returns the normalised value; `dateFixDescription` explains the issue.
+- `FileListViewModel+DTOFix` (new): `fixDTOSelected()` / `fixDTOAll()` — dirty-save normalisation of the in-memory `dateTimeOriginal` (no immediate disk write; user reviews the diff and commits via Save). `selectAllNeedsDTOFix()` selects all invalid-date files.
+- `PreviewPanel`: "Invalid Date Format" banner (mirrors the Extension Mismatch banner) with "Fix Selected (N)" / "Fix All (N)" buttons and a caption explaining the dirty-save flow.
+- `FileTableView`: ⚠️ prefix + orange styling on the Date column for invalid dates, tooltip "Invalid date format — use the Fix Date/Time action in the preview to correct", and a "Fix Date/Time Format" context-menu item.
+- `QuickStatsBar`: "invalid date" count pill (calendar.badge.exclamationmark) that selects all invalid-date files; `isFixingDTO` shown in the status bar.
+- `FileStats`: `dtoFixCount` cached in `recomputeStats()`.
+
+### Changed
+- `ExifToolService+ReadWrite`: `writeDateTimeOriginal` now clears stray `XMP:DateTimeOriginal` and `IPTC:DateTimeOriginal` tags so the corrected EXIF value isn't shadowed on re-read.
+- `FileListViewModel`: `dtoFixCount` computed property lives in the main class (accesses private `_statsVersion`/`_cachedStats`).

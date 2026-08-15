@@ -368,14 +368,14 @@ extension FileTableNSView {
                 return cell
 
             case "dateTimeOriginal":
-                // Prepend warning emoji when the date format needs sanitising
-                let displayText = file.needsSanitise ? "⚠️ \(file.dateTimeOriginal)" : file.dateTimeOriginal
+                // Prepend warning emoji when the date format is invalid
+                let displayText = file.dateNeedsFix ? "⚠️ \(file.dateTimeOriginal)" : file.dateTimeOriginal
                 let cell = dequeueEditableCell(tableView: tableView, id: cellID,
                                                 text: displayText,
-                                                dirty: file.isDirty || file.needsSanitise,
+                                                dirty: file.isDirty || file.dateNeedsFix,
                                                 columnID: columnID, row: row)
-                cell.textField?.toolTip = file.needsSanitise
-                    ? "Date format needs sanitising — run Sanitise Selected"
+                cell.textField?.toolTip = file.dateNeedsFix
+                    ? "Invalid date format — use the Fix Date/Time action in the preview to correct"
                     : "DateTimeOriginal (EXIF tag)"
                 return cell
 
@@ -539,6 +539,19 @@ extension FileTableNSView {
                 menu.addItem(.separator())
             }
 
+            if file.dateNeedsFix {
+                let fixDTOItem = NSMenuItem(
+                    title: "Fix Date/Time Format",
+                    action: #selector(fixDTOForRow(_:)),
+                    keyEquivalent: ""
+                )
+                fixDTOItem.target = self
+                fixDTOItem.tag = firstRow
+                fixDTOItem.toolTip = file.dateFixDescription
+                menu.addItem(fixDTOItem)
+                menu.addItem(.separator())
+            }
+
             // Provide sort-by-type for the current file's actual type
             let sortItem = NSMenuItem(
                 title: "Sort by Mismatched",
@@ -556,6 +569,13 @@ extension FileTableNSView {
             guard row < files.count else { return }
             let file = files[row]
             Task { await viewModel.fixExtensionsAsync(only: [file]) }
+        }
+
+        @objc private func fixDTOForRow(_ sender: NSMenuItem) {
+            let row = sender.tag
+            guard row < files.count else { return }
+            let file = files[row]
+            Task { await viewModel.fixDTOAsync(only: [file]) }
         }
 
         @objc private func sortByMismatched(_ sender: NSMenuItem) {

@@ -1,0 +1,165 @@
+# Cline Rules — ExifShell
+
+## Project Overview
+
+ExifShell is a native macOS app (SwiftUI 5+, macOS 14+) for viewing and editing `DateTimeOriginal` and `Description` metadata on **images and videos** via ExifTool. Architecture: **MVVM** with a single static service layer for shell commands.
+
+**Media support:**
+- Images: JPEG, PNG, HEIC, RAW (CR2/CR3/NEF/ARW/DNG/ORF/RW2/SR2), TIFF, GIF, BMP, WebP, ICO, PSD
+- Videos: MP4, MOV, M4V, AVI, MKV, WMV, FLV, WebM, TS, MTS, M2TS, 3GP, 3G2, OGV, MXF, MPG, MPEG
+
+**Unwritable formats:** AVI, MPG, MPEG — ExifTool cannot write to RIFF/MPEG containers. These are skipped on save (with a warning) and renamed via `FileManager` using in-memory metadata.
+
+**Tag mapping:**
+- Images → `EXIF:DateTimeOriginal`
+- QuickTime videos (MP4/MOV/M4V) → `QuickTime:CreationDate`
+- Other videos → `DateTimeOriginal` (container-specific via ExifTool)
+- Description: images write to `Description`, `ImageDescription`, `Caption-Abstract`; videos write to `Description` only
+
+**Full documentation:** See `Documentation/AGENTS.md` and `Documentation/ARCHITECTURE.md` for complete context.
+
+---
+
+## Build
+
+```bash
+make            # Release build + copy to ~/Downloads + open
+make build      # Release build only
+make install    # Copy built .app to ~/Downloads
+make run        # Open from ~/Downloads
+make clean      # Remove from ~/Downloads
+```
+
+Uses `xcodebuild` under the hood. Requires macOS 14+ and `exiftool` installed.
+
+---
+
+## File Structure
+
+```
+ExifShell/ExifShell/
+├── ExifShellApp.swift              # @main — activation policy, window size (1100×680)
+├── ContentView.swift               # Root: drop zone ↔ split pane, ⌘K/⌘S/⌫ shortcuts
+├── Models/
+│   └── ImageFile.swift             # @Observable: URL, filename, editable date/desc + dirty tracking, ReadOnlyMetadata
+├── ViewModels/
+│   ├── FileListViewModel.swift     # @Observable: files[], selection, bulk edit, save, sanitise, rename
+│   ├── FileListViewModel+Save.swift
+│   ├── FileListViewModel+Rename.swift
+│   └── FileListViewModel+ExtensionFix.swift
+├── Services/
+│   ├── ExifToolService.swift       # Static enum: runReadTool/runWriteTool, exifToolPath, JSON decoders
+│   ├── ExifToolService+Extensions.swift  # videoExtensions, quickTimeExtensions, splitByMediaType
+│   ├── ExifToolService+ReadWrite.swift   # readAllMetadata, writeDateTimeOriginal, writeDescription, sanitise
+│   └── ExifToolService+Rename.swift      # renameFiles, detectTagCategories, path mapping
+└── Views/
+    ├── DropZoneView.swift
+    ├── FileTableView.swift         # NSTableView, editable columns, orange dirty text, sortable
+    ├── PreviewPanel.swift          # Thumbnail + diff + read-only metadata + action buttons
+    ├── QuickStatsBar.swift         # File count pills + status bar
+    ├── BulkEditDateBar.swift
+    └── BulkEditDescriptionBar.swift
+```
+
+**Dependency flow:** `ExifShellApp` → `ContentView` → `FileListViewModel` ←→ `ExifToolService` ← `exiftool CLI`
+
+---
+
+## Key Conventions
+
+### Use `@Observable` (not `ObservableObject`)
+All models and view models use the `@Observable` macro (macOS 14+). No `@Published` or `objectWillChange`.
+- Views: `let viewModel: FileListViewModel` (not `@ObservedObject`)
+- Nested views: `@Bindable var viewModel: FileListViewModel`
+- Bindings: `@Bindable var bindableFile = file` then `$bindableFile.dateTimeOriginal`
+
+### ExifTool call patterns
+- **Batch always:** accept `[URL]`, single file is just `[url]`.
+- **Path:** Use the static `exifToolPath` property — never `/usr/bin/env` (breaks in Xcode). It auto-resolves: PATH → `/opt/homebrew/bin/exiftool` → `/usr/local/bin` → `/usr/bin` → `/opt/local/bin` → Cellar fallbacks.
+- **Tag groups:** Use explicit specifiers: `-EXIF:DateTimeOriginal=` for images, `-QuickTime:CreationDate=` for videos.
+- **Mixed batches:** Use `splitByMediaType(_:)` to separate images/QuickTime/other-video before writes.
+- **Exit codes:**
+  - `runWriteTool`: exit code 1 = success (ExifTool uses `-m` to ignore minor errors, exits 1 on warnings).
+  - `runReadTool`: non-empty stdout = success regardless of exit code.
+- **Pipe draining:** Always read stdout/stderr before `waitUntilExit()` — otherwise deadlock on >64KB output (common with 100+ files).
+
+### Dirty state
+`ImageFile.isDirty` is set automatically in `didSet` of `dateTimeOriginal` and `description`. Call `markClean()` after a successful save (this should happen in `FileListViewModel+Save.swift`).
+
+### Adding a read-only metadata field
+1. `ExifToolService+ReadWrite.swift`: add tag to `readAllTags`, add to `FileMetadata`, populate in `readAllMetadata()`, add `nil` to `emptyMetadata()`.
+2. `ImageFile.swift`: add to `ReadOnlyMetadata` struct.
+3. `FileListViewModel.swift`: add `file.readOnly.xxx = m.xxx` in `applyMetadata()`.
+4. `FileTableView.swift`: add column def + `case` in `tableView(_:viewFor:row:)` + sort key.
+5. `PreviewPanel.swift`: add `metadataRow(...)` call.
+
+### Adding an editable metadata field
+1. `ImageFile.swift`: add property + baseline + dirty logic.
+2. `ExifToolService+ReadWrite.swift`: add tag + write method.
+3. `FileListViewModel.swift`: update `applyMetadata()` + save pipeline.
+4. `FileTableView.swift`: add editable column with `@Bindable`.
+5. `PreviewPanel.swift`: add diff section.
+
+### Adding a new view
+Create in `ExifShell/ExifShell/Views/`, pass `@Bindable var viewModel: FileListViewModel`, add to `ContentView.swift`.
+
+### Adding a new media type
+1. Add extension to `videoExtensions` in both `ExifToolService+Extensions.swift`.
+2. Update `FileListViewModel.mediaType(for:)` and `isSupportedFile(_:)`.
+3. If QuickTime container, add to `quickTimeExtensions`.
+4. If ExifTool can't write, add to `unwritableVideoExtensions`.
+5. For sanitise, add a branch in `ExifToolService.sanitise(_:)`.
+
+### Theme & Style
+- Always use `Color(nsColor: ...)` with system colors (no hardcoded grays/blacks).
+- Use `.ultraThinMaterial` or `.tertiarySystemFill` for backgrounds.
+- Use `.separatorColor` for borders/strokes.
+
+### Changelog
+Every session should append a brief entry to `Documentation/CHANGELOG.md` under `Added` / `Fixed` / `Changed` headings.
+
+---
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| ⌘S | Save all dirty files |
+| ⌘K | Clear all files / drop zone |
+| ⌫ Delete | Remove selected files from list |
+| ⌘+click | Toggle multi-select in table |
+| Return | Apply bulk edit value |
+
+---
+
+## ExifTool Commands
+
+| Operation | Command |
+|---|---|
+| Read (full batch) | `exiftool -json -DateTimeOriginal -QuickTime:CreationDate -CreateDate -ModifyDate -FileModifyDate -Description -ImageDescription -Caption-Abstract -Subject -Keywords -LastKeywordXMP -Duration -ImageWidth -ImageHeight -Make -Model -FileType -FileTypeExtension <files...>` |
+| Write (date, images) | `exiftool -overwrite_original -EXIF:DateTimeOriginal="<v>" -CreateDate="<v>" -ModifyDate="<v>" -OffsetTime= -OffsetTimeOriginal= -OffsetTimeDigitized= <files...>` |
+| Write (date, QuickTime) | `exiftool -overwrite_original -QuickTime:CreationDate="<v>" -CreateDate="<v>" -ModifyDate="<v>" -MediaCreateDate="<v>" -MediaModifyDate="<v>" -TrackCreateDate="<v>" -TrackModifyDate="<v>" -DateTimeOriginal="<v>" <files...>` |
+| Write (date, other videos) | `exiftool -overwrite_original -DateTimeOriginal="<v>" -CreateDate="<v>" -ModifyDate="<v>" <files...>` |
+| Write (desc, images) | `exiftool -overwrite_original -Description="<v>" -ImageDescription="<v>" -Caption-Abstract="<v>" <files...>` |
+| Write (desc, videos) | `exiftool -overwrite_original -Description="<v>" <files...>` |
+| Sanitise (images) | `exiftool -overwrite_original '-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}' '-CreateDate<DateTimeOriginal' '-ModifyDate<DateTimeOriginal' -OffsetTime= -OffsetTimeOriginal= -OffsetTimeDigitized= '-ImageDescription<Description' '-Caption-Abstract<Description' <files...>` |
+| Sanitise (QuickTime) | `exiftool -overwrite_original '-QuickTime:CreationDate<${QuickTime:CreationDate;DateFmt("%Y:%m:%d %H:%M:%S")}' '-CreateDate<QuickTime:CreationDate' '-ModifyDate<QuickTime:CreationDate' '-MediaCreateDate<QuickTime:CreationDate' '-MediaModifyDate<QuickTime:CreationDate' '-TrackCreateDate<QuickTime:CreationDate' '-TrackModifyDate<QuickTime:CreationDate' <files...>` |
+| Sanitise (other videos) | `exiftool -overwrite_original '-DateTimeOriginal<${DateTimeOriginal;DateFmt("%Y:%m:%d %H:%M:%S")}' '-CreateDate<DateTimeOriginal' '-ModifyDate<DateTimeOriginal' <files...>` |
+| Rename | `exiftool -v -m "-FileName<${CreateDate}_%03.c${Description;if($_){s/'//g;s/[^\p{L}\p{N}]+/_/g;s/^_+|_+$//g;$_="_ ".$_}}.%e" -d %Y_%m_%d_%H%M <files...>` |
+
+---
+
+## Quick Reference (Grep Patterns)
+
+| Need | Search | File |
+|---|---|---|
+| ExifTool process spawn | `runReadTool` or `runWriteTool` | `ExifToolService.swift` |
+| ExifTool tag list | `readAllTags` | `ExifToolService+ReadWrite.swift` |
+| Save pipeline | `saveAllAsync` | `FileListViewModel+Save.swift` |
+| Rename pipeline | `renameFiles` | `ExifToolService+Rename.swift` |
+| Apply metadata service→model | `applyMetadata` | `FileListViewModel.swift` |
+| ReadOnlyMetadata definition | `struct ReadOnlyMetadata` | `ImageFile.swift` |
+| Sort keys | `enum SortKey` | `FileListViewModel.swift` |
+| Video extensions | `videoExtensions` | `ExifToolService+Extensions.swift` |
+| Camera column rendering | `case "camera"` | `FileTableView.swift` |
+| dateSource badge | `dateSourceLabel` | `ImageFile.swift` |

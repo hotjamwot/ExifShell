@@ -459,6 +459,12 @@ extension ExifToolService {
         var outputs: [String] = []
 
         if !imageURLs.isEmpty {
+            // The XMP/IPTC DateTimeOriginal deletions clear stray ISO 8601
+            // values (e.g. "2010-03-27T01:40:19+00:00") that can remain after a
+            // "Fix DTO" save. Without clearing them, the old XMP tag could be
+            // read back in preference to (or alongside) the corrected EXIF value
+            // on the next import. `-m` suppresses "tag not found" warnings when
+            // these tags don't exist, so this is a safe no-op for clean files.
             let args: [String] = [
                 "-overwrite_original",
                 "-m",
@@ -467,7 +473,9 @@ extension ExifToolService {
                 "-ModifyDate=\(value)",
                 "-OffsetTime=",
                 "-OffsetTimeOriginal=",
-                "-OffsetTimeDigitized="
+                "-OffsetTimeDigitized=",
+                "-XMP:DateTimeOriginal=",
+                "-IPTC:DateTimeOriginal="
             ] + imageURLs.map(\.path)
             let result = runWriteTool(with: args)
             if !result.success { allSucceeded = false }
@@ -492,12 +500,15 @@ extension ExifToolService {
         }
 
         if !otherVideoURLs.isEmpty {
+            // Clear stray XMP/IPTC DateTimeOriginal tags (see comment above).
             let args: [String] = [
                 "-overwrite_original",
                 "-m",
                 "-DateTimeOriginal=\(value)",
                 "-CreateDate=\(value)",
-                "-ModifyDate=\(value)"
+                "-ModifyDate=\(value)",
+                "-XMP:DateTimeOriginal=",
+                "-IPTC:DateTimeOriginal="
             ] + otherVideoURLs.map(\.path)
             let result = runWriteTool(with: args)
             if !result.success { allSucceeded = false }

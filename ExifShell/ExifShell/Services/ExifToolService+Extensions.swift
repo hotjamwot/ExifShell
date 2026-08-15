@@ -138,6 +138,13 @@ extension ExifToolService {
     ///  - Replaces a literal `T` between date/time with a space
     ///  - Converts `YYYY-MM-DD` → `YYYY:MM:DD`
     ///  - If the input already matches EXIF format, returns it unchanged
+    ///
+    /// NOTE: This intentionally does NOT strip fractional seconds (e.g.
+    /// `17:08:43.93`). It is used on the read path (`readAllMetadata`,
+    /// `readDateTimeOriginal`) and the sanitise pre-write, where silently
+    /// altering the value would hide the ⚠️ invalid-date flag and bypass
+    /// the user's review. Fractional-second stripping is handled by
+    /// `normalizeToExifDateForFix` (used only by the "Fix DTO" action).
     static func normalizeToExifDate(_ dateString: String) -> String {
         let stripped = stripTimezone(from: dateString)
 
@@ -161,6 +168,27 @@ extension ExifToolService {
             return "\(datePart) \(timePart)"
         }
         return datePart
+    }
+
+    /// Normalises a date string for the "Fix DTO" action.
+    ///
+    /// Unlike `normalizeToExifDate` (used on the read path), this also strips
+    /// fractional seconds so values like `2024:09:28 17:08:43.93` become
+    /// `2024:09:28 17:08:43`. This is intentionally NOT applied on import —
+    /// the user should see the raw value flagged with ⚠️ and review the fix
+    /// in the diff before committing via Save.
+    ///
+    /// - Parameter dateString: The raw date string from the model.
+    /// - Returns: The normalised EXIF-format date string.
+    static func normalizeToExifDateForFix(_ dateString: String) -> String {
+        let normalized = normalizeToExifDate(dateString)
+        // Strip fractional seconds (e.g. "17:08:43.93" → "17:08:43").
+        // iPhone/camera EXIF dates often include milliseconds after the seconds.
+        if let fracRegex = try? NSRegularExpression(pattern: "\\.\\d+$") {
+            let range = NSRange(normalized.startIndex..<normalized.endIndex, in: normalized)
+            return fracRegex.stringByReplacingMatches(in: normalized, range: range, withTemplate: "")
+        }
+        return normalized
     }
 
     /// Attempts to extract a concise, user-friendly error summary from ExifTool's

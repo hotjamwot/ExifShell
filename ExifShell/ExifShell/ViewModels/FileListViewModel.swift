@@ -88,6 +88,7 @@ class FileListViewModel {
         var videoCount = 0
         var dirtyCount = 0
         var mismatchedCount = 0
+        var dtoFixCount = 0
     }
 
     private var _cachedStats = FileStats()
@@ -108,6 +109,7 @@ class FileListViewModel {
             }
             if file.isDirty { stats.dirtyCount += 1 }
             if file.hasMismatchedExtension { stats.mismatchedCount += 1 }
+            if file.dateNeedsFix { stats.dtoFixCount += 1 }
         }
         _cachedStats = stats
     }
@@ -193,6 +195,8 @@ class FileListViewModel {
     var isFixingExtensions = false
     /// Whether sanitise is currently running.
     var isSanitising = false
+    /// Whether a DTO date-format fix is currently running.
+    var isFixingDTO = false
     /// Tracks the most recent extension fix rename pairs (oldURL → newURL)
     /// so the user can undo a fix operation. Cleared when a new fix runs.
     var lastExtensionFixUndo: [(oldURL: URL, newURL: URL)] = []
@@ -245,6 +249,13 @@ class FileListViewModel {
     /// Number of selected files whose actual content type doesn't match
     /// their filename suffix.
     var selectedMismatchedCount: Int { selectedFiles.filter(\.hasMismatchedExtension).count }
+
+    /// Number of files whose DateTimeOriginal format is invalid
+    /// (e.g. XMP ISO 8601 dates like `2010-03-27T01:40:19+00:00`).
+    var dtoFixCount: Int {
+        _ = _statsVersion
+        return _cachedStats.dtoFixCount
+    }
 
     /// The bulk-edit date value being typed (shown in the DateTimeOriginal toolbar when multiple files are selected).
     var bulkEditValue: String = ""

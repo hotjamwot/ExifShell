@@ -113,6 +113,37 @@ struct QuickStatsBar: View {
                 .id(viewModel.mismatchedCount) // force re-create for animation on change
                 .help("Click to select all mismatched files")
             }
+
+            // Invalid date format count pill (only shown when > 0).
+            // Clicking it selects all invalid-date files for bulk fixing.
+            if viewModel.dtoFixCount > 0 {
+                Text("·")
+                    .foregroundColor(.secondary.opacity(0.5))
+
+                Button {
+                    viewModel.selectAllNeedsDTOFix()
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "calendar.badge.exclamationmark")
+                            .font(.system(size: 9))
+                        Text("\(viewModel.dtoFixCount) invalid date")
+                            .font(.system(.caption, design: .monospaced, weight: .medium))
+                            .contentTransition(.numericText())
+                    }
+                    .foregroundColor(.orange)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(Color.orange.opacity(0.12))
+                    )
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .transition(.scale.combined(with: .opacity))
+                .id(viewModel.dtoFixCount) // force re-create for animation on change
+                .help("Click to select all files with invalid date formats")
+            }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
@@ -151,6 +182,7 @@ struct StatusBarView: View {
             || viewModel.isSaving
             || viewModel.isRenaming
             || viewModel.isFixingExtensions
+            || viewModel.isFixingDTO
             || !viewModel.files.isEmpty
         {
             HStack(spacing: 8) {
@@ -193,7 +225,7 @@ struct StatusBarView: View {
                         .scaleEffect(0.7)
                         .controlSize(.small)
                         .frame(width: 120)
-                } else if viewModel.isLoading || viewModel.isSaving || viewModel.isRenaming || viewModel.isFixingExtensions {
+                } else if viewModel.isLoading || viewModel.isSaving || viewModel.isRenaming || viewModel.isFixingExtensions || viewModel.isFixingDTO {
                     ProgressView()
                         .scaleEffect(0.7)
                         .controlSize(.small)

@@ -280,18 +280,21 @@ final class ImageFile: Identifiable, Hashable {
         }
     }
 
-    // MARK: - Sanitise Detection
+    // MARK: - Invalid Date Format Detection ("Fix DTO")
 
     /// The expected format for DateTimeOriginal values: `yyyy:MM:dd HH:mm:ss`.
-    /// XMP-style ISO 8601 dates (e.g. `2010-03-27T01:40:19+00:00`) need to be
-    /// sanitised before ExifShell can use them properly.
+    /// XMP-style ISO 8601 dates (e.g. `2010-03-27T01:40:19+00:00`) have a broken
+    /// format that ExifShell cannot parse (the app's date formatter expects the
+    /// EXIF format). Such files are flagged as having an "invalid date format"
+    /// and can be fixed via the "Fix DTO" action.
     private static let exifDatePattern = #"^\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2}$"#
 
     /// Returns true if the file's `dateTimeOriginal` contains a non-EXIF date
-    /// format that would benefit from sanitisation. This typically catches
-    /// XMP/ISO 8601 dates like `2010-03-27T01:40:19+00:00` that the app's
-    /// date formatter cannot parse.
-    var needsSanitise: Bool {
+    /// format that ExifShell cannot parse. This typically catches XMP/ISO 8601
+    /// dates like `2010-03-27T01:40:19+00:00` or EXIF dates with a timezone
+    /// suffix like `2011:03:16 11:55:13+00:00`. These should be fixed via the
+    /// "Fix DTO" action before other operations (like Offset) can use them.
+    var dateNeedsFix: Bool {
         guard !dateTimeOriginal.isEmpty else { return false }
         // Check if it already matches the expected EXIF format
         if let regex = try? NSRegularExpression(pattern: Self.exifDatePattern) {
@@ -301,6 +304,30 @@ final class ImageFile: Identifiable, Hashable {
             }
         }
         return true
+    }
+
+    /// The cleaned (normalised) EXIF-format date value for files flagged by
+    /// `dateNeedsFix`. Returns nil when no fix is needed or no cleaner value
+    /// can be derived.
+    ///
+    /// Example: `2010-03-27T01:40:19+00:00` → `2010:03:27 01:40:19`
+    /// Example: `2024:09:28 17:08:43.93` → `2024:09:28 17:08:43`
+    ///
+    /// Uses `normalizeToExifDateForFix` (not `normalizeToExifDate`) so
+    /// fractional seconds are stripped ONLY when the user explicitly runs
+    /// the "Fix DTO" action — never silently on import.
+    var cleanedDateTimeOriginal: String? {
+        guard dateNeedsFix else { return nil }
+        let cleaned = ExifToolService.normalizeToExifDateForFix(dateTimeOriginal)
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
+    /// A human-readable description of the invalid date format, e.g.
+    /// "This file's date format is invalid (2010-03-27T01:40:19+00:00), not
+    /// YYYY:MM:DD HH:MM:SS".
+    var dateFixDescription: String? {
+        guard dateNeedsFix else { return nil }
+        return "This file's DateTimeOriginal uses a non-EXIF format (\(dateTimeOriginal)), which ExifShell cannot parse. Expected YYYY:MM:DD HH:MM:SS — no milliseconds or timezone offset."
     }
 
     // MARK: - Hashable
