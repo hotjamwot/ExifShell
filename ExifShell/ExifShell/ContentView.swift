@@ -59,15 +59,13 @@ struct ContentView: View {
                         // Status bar
                         StatusBarView(viewModel: viewModel)
                     }
-                    // idealWidth controls the initial split position. The table
-                    // gets ~2/3 and the preview opens at its minimum (~1/3)
-                    // instead of the default 50/50.
+                    // Original idealWidth values with maxWidth constraint on PreviewPanel
                     .frame(minWidth: 200, idealWidth: 600)
 
                     PreviewPanel(viewModel: viewModel)
-                        .frame(minWidth: 300, idealWidth: 300)
+                        .frame(minWidth: 300, idealWidth: 300, maxWidth: 400)
                 }
-                .frame(minWidth: 720, minHeight: 400)
+                    .frame(minWidth: 500, minHeight: 400)
 
                 // Drag target overlay — visible even when files loaded
                 if isTargeted {
