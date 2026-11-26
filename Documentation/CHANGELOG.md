@@ -15,6 +15,16 @@ Format:
 
 ---
 
+
+## [2026-11-26] — Decision Log & Pixel Motion Photo Review
+
+### Added
+- `Documentation/DECISIONS.md` — new decision log recording architectural/product decisions with reasoning. First entry covers the Pixel Motion Photo (.MP.jpg) review.
+
+### Changed
+- Investigated Pixel Motion Photo metadata (`inbox/PXL_20250816_160839304.MP.jpg` vs `inbox/PXL_20250817_120138549.jpg`). Confirmed MP file carries an embedded ~2.7 MB MP4 (`MotionPhotoVideo`) and `XMP-GCamera:MotionPhoto = 1` flags; normal JPEG lacks both. No code changes made — MP files kept as-is and identified via embedded metadata.
+
+---
 ## [2026-08-14] — DTO Fix: Strip Fractional Seconds
 
 ### Fixed
